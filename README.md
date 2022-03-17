@@ -1,4 +1,4 @@
-# Wiggly: Animating Deformable Objects using Spacetime Constraints
+# Wiggly: Animating Deformable Objects Using Spacetime Constraints
 
 ## Build Instruction
 To build the C++ code, you must have cmake and a compiler installed.
