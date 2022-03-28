@@ -5,7 +5,7 @@
 #include <SOP/SOP_NodeVerb.h>
 #include <UT/UT_StringHolder.h>
 
-namespace HDK_Sample {
+namespace HDK_Wiggly {
 
   class SOP_Wiggly : public SOP_Node
   {
@@ -32,9 +32,20 @@ namespace HDK_Sample {
     ~SOP_Wiggly() override {}
 
     // delegates to the verb
-    OP_ERROR		 cookMySop(OP_Context& context)
+    OP_ERROR cookMySop(OP_Context& context) override
     {
+      flags().setTimeDep(true);  //NOTE: Is this the right way to do it?
       return cookMyselfAsVerb(context);
+    }
+
+    const char* inputLabel(unsigned idx) const override
+    {
+      switch (idx)
+      {
+      case 0:   return "Rest Shape";
+      case 1:   return "Constraints";
+      default:  return "Invalid Source";
+      }
     }
 };
 } // End HDK_Sample namespace
