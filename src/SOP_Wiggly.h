@@ -42,7 +42,7 @@ namespace HDK_Wiggly {
     {
       switch (idx)
       {
-      case 0:   return "Rest Shape";
+      case 0:   return "Tetrahedral Rest Mesh";
       case 1:   return "Constraints";
       default:  return "Invalid Source";
       }

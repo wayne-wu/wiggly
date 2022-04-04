@@ -1,3 +1,7 @@
+#include "GU/GU_PrimTetrahedron.h"
+#include "UT/UT_Interrupt.h"
+
+
 #include "Wiggly.h"
 
 #include "Eigen/Eigenvalues"
@@ -7,6 +11,12 @@
 #include "unsupported/Eigen/NumericalDiff"
 
 #include "gsl/gsl_integration.h"
+
+#include <iostream>
+#include <unordered_set>
+
+
+#define CANTOR(a, b) (a + b) * (a + b + 1) / 2 + a
 
 
 using namespace HDK_Wiggly;
@@ -219,7 +229,7 @@ Compute the displacement vector
 VecX Wiggly::u(const float t, const VecX& coeffs)
 {
 	VecX out = Eigen::VectorXf::Zero(3 * getNumPoints());
-	for (int i = 0; i < parms.dim; i++)
+	for (int i = 0; i < parms.d; i++)
 	{
 		float lambda = eigenValues(i);
 		float delta = 0.5 * (parms.alpha + parms.beta * lambda);
@@ -234,7 +244,7 @@ Compute the velocity vector
 VecX Wiggly::uDot(const float t, const VecX& coeffs)
 {
 	VecX out = Eigen::VectorXf::Zero(3 * getNumPoints());
-	for (int i = 0; i < parms.dim; i++)
+	for (int i = 0; i < parms.d; i++)
 	{
 		float lambda = eigenValues(i);
 		float delta = 0.5 * (parms.alpha + parms.beta * lambda);
@@ -331,10 +341,10 @@ float Wiggly::dynamicsEnergy(const VecX& coeffs)
 {
 	float total = 0;
 	int numCoeff = getNumCoeffs();
-	for (int i = 0; i < parms.dim; ++i)
+	for (int i = 0; i < parms.d; ++i)
 	{
 		float lambda = eigenValues(i);
-		float delta = 0.5 * (parms.alpha + parms.beta * lambda);
+		float delta = 0.5f * (parms.alpha + parms.beta * lambda);
 		float e = integralEnergy(delta, lambda, coeffs.segment(numCoeff * i, numCoeff));
 		total += e * e;
 	}
@@ -359,146 +369,291 @@ UT_Vector3 Wiggly::getVelConstraint(const GU_Detail* detail, const GA_Index ptid
 }
 
 /*
-Compute the stiffness matrix based on the tetrahedral mesh (FEM) 
-Adopted from http://knapiontek.github.io/fem.pdf
-*/
-void Wiggly::computeStiffnessMatrix() 
-{
-	const int dof = 3 * getNumPoints();
-
-	K = Eigen::MatrixXf::Zero(dof, dof);
-
-	const float EA = 1000;
-
-	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
-	{
-		const GA_Primitive* prim = mesh->getPrimitive(*it);
-
-		const GA_Offset pt1off = prim->getPointOffset(0);
-		const GA_Offset pt2off = prim->getPointOffset(1);
-
-		const GA_Index pt1idx = mesh->pointIndex(pt1off);
-		const GA_Index pt2idx = mesh->pointIndex(pt2off);
-
-		const UT_Vector3& point1 = mesh->getPos3(pt1off);
-		const UT_Vector3& point2 = mesh->getPos3(pt2off);
-
-		int p1x = 3 * pt1idx + 0;
-		int p1y = 3 * pt1idx + 1;
-		int p1z = 3 * pt1idx + 2;
-		int p2x = 3 * pt2idx + 0;
-		int p2y = 3 * pt2idx + 1;
-		int p2z = 3 * pt2idx + 2;
-
-		float dx = point2.x() - point1.x();
-		float dy = point2.y() - point1.y();
-		float dz = point2.z() - point1.z();
-		float l = 1.0/sqrt(dx * dx + dy * dy + dz * dz);
-		
-		float cx = dx * l;
-		float cy = dy * l;
-		float cz = dz * l;
-		float cxx = cx * cx * EA * l;
-		float cyy = cy * cy * EA * l;
-		float czz = cz * cz * EA * l;
-		float cxy = cx * cy * EA * l;
-		float cxz = cx * cz * EA * l;
-		float cyz = cy * cz * EA * l;
-	
-		K(p1x, p1x) += cxx;
-		K(p1y, p1x) += cxy;
-		K(p1z, p1x) += cxz;
-		K(p2x, p1x) -= cxx;
-		K(p2y, p1x) -= cxy;
-		K(p2z, p1x) -= cxz;
-
-		K(p1x, p1y) += cxy;
-		K(p1y, p1y) += cyy;
-		K(p1z, p1y) += cyz;
-		K(p2x, p1y) -= cxy;
-		K(p2y, p1y) -= cyy;
-		K(p2z, p1y) -= cyz;
-
-		K(p1x, p1z) += cxz;
-		K(p1y, p1z) += cyz;
-		K(p1z, p1z) += czz;
-		K(p2x, p1z) -= cxz;
-		K(p2y, p1z) -= cyz;
-		K(p2z, p1z) -= czz;
-
-		K(p1x, p2x) -= cxx;
-		K(p1y, p2x) -= cxy;
-		K(p1z, p2x) -= cxz;
-		K(p2x, p2x) += cxx;
-		K(p2y, p2x) += cxy;
-		K(p2z, p2x) += cxz;
-
-		K(p1x, p2y) -= cxy;
-		K(p1y, p2y) -= cyy;
-		K(p1z, p2y) -= cyz;
-		K(p2x, p2y) += cxy;
-		K(p2y, p2y) += cyy;
-		K(p2z, p2y) += cyz;
-
-		K(p1x, p2z) -= cxz;
-		K(p1y, p2z) -= cyz;
-		K(p1z, p2z) -= czz;
-		K(p2x, p2z) += cxz;
-		K(p2y, p2z) += cyz;
-		K(p2z, p2z) += czz;
-	}
-}
-
-/*
-Compute the lumped-mass matrix 
-*/
-void Wiggly::computeMassMatrix() {
-	int dof = mesh->getNumPoints();
-	M = Eigen::DiagonalMatrix<float, 2>();
-}
-
-/*
-Compute coefficients
-*/
-void Wiggly::computeCoefficients() {
-
-	int numCoeffs = 4 * (keyframes.size() - 1);
-	int numConstraints = 6 + 6;
-	for (int i = 1; i < keyframes.size() - 1; i++)
-		numConstraints += keyframes[i].hasVel ? 9 : 6;
-
-	Eigen::MatrixXf A = Eigen::MatrixXf::Zero(numConstraints, numCoeffs);
-	Eigen::VectorXf B = Eigen::VectorXf::Zero(numConstraints);
-
-	// TODO: Construct A and B matrices
-
-	// NOTE: BDCSVD preferred for larger matrix
-	Eigen::BDCSVD<Eigen::MatrixXf> svd(A);
-	int subspace_dim = numCoeffs - numConstraints;
-	Eigen::MatrixXf U = svd.matrixV()(Eigen::all, Eigen::last - subspace_dim);
-
-	Eigen::VectorXf w0 = A.completeOrthogonalDecomposition().pseudoInverse()*B;
-
-	// NOTE: Is passing in *this the best way to approach functor?
-	WigglyFunctor functor(*this, U, w0);
-	Eigen::NumericalDiff<WigglyFunctor> numDiff(functor);
-	Eigen::LevenbergMarquardt<Eigen::NumericalDiff<WigglyFunctor>, float> lm(numDiff);
-
-	// Initial guess
-	Eigen::VectorXf xmin = Eigen::VectorXf::Zero(numCoeffs*parms.dim);
-
-	lm.minimize(xmin);
-
-	coefficients = xmin;  // TODO: Can we directly minimize on the member variable?
-}
-
-/*
-Main compute function to determine the coefficients
+Compute the wiggly splines' coefficients based on the sparse keyframes.
+This should be recomputed when the mesh changes or the keyframes change.
 */
 void Wiggly::compute() {
 
-	computeStiffnessMatrix();
-	computeMassMatrix();
+	UT_AutoInterrupt progress("Computing wiggly spline coefficients");
+
+	int dof = getDof();
+	int d = parms.d;
+
+	int numCoeffs = getTotalNumCoeffs();
+	int numConditions = 4 * d;
+	for (int i = 1; i < keyframes.size() - 1; i++)
+		numConditions += keyframes[i].hasVel ? 2 * d : 3 * d;
+
+	Eigen::MatrixXf A = Eigen::MatrixXf::Zero(numConditions, numCoeffs);
+	Eigen::VectorXf B = Eigen::VectorXf::Zero(numConditions);
+
+	int row = 0; // The row correlates to the number of linear conditions
+
+	// Boundary condition at t0
+	const Keyframe& k0 = keyframes.front();
+	for (int i = 0; i < d; i++)
+	{
+
+		float lambda = eigenValues(i);
+		float delta = 0.5f * (parms.alpha + parms.beta * lambda);
+
+		std::cout << "Dim: " << i << " Lambda: " << lambda << " Delta: " << delta << std::endl;
+		for (int j = 0; j < 4; j++)
+		{
+			int col = getCoeffIdx(0, i, j);
+			float tmp = b(k0.frame, delta, lambda, j);
+			std::cout << " Basis " << j << " " << tmp;
+			A(row + i, col) = tmp;
+			if (k0.hasVel)
+				A(row + d + i, col) = bDot(k0.frame, delta, lambda, j);
+		}
+		std::cout << std::endl;
+	}
+
+	UT_Array<UT_Vector3F> positions;
+	k0.detail->getPos3AsArray(k0.detail->getPointRange(), positions);
+	Eigen::Map<Eigen::VectorXf> p0(positions.data()->data(), dof);
+
+	Eigen::MatrixXf phi = eigenModes(Eigen::all, Eigen::seqN(0,d)).transpose();  // This should be d x 3n
+
+	B.segment(row, d) = phi * M * p0;
+	//if (k0.hasVel)
+	//	B.segment(row + d, d) = Eigen::VectorXf::Zero(d);
+
+	row += k0.hasVel ? 2*d : 1*d;
+
+	// In-between constraints
+	for (int i = 1; i < keyframes.size() - 1; i++)
+	{
+		const Keyframe& ki = keyframes[i];
+		for (int j = 0; j < d; j++)
+		{
+			float lambda = eigenValues(i);
+			float delta = 0.5f * (parms.alpha + parms.beta * lambda);
+
+			for (int l = 0; l < 4; l++)
+			{
+				float bj = b(ki.frame, delta, lambda, j);
+				float bdj = bDot(ki.frame, delta, lambda, j);
+				float bddj = bDDot(ki.frame, delta, lambda, j);
+
+				int col1 = getCoeffIdx(i - 1, j, l);
+				int col2 = getCoeffIdx(i, j, l);
+
+				// C0 Continuity
+				A(row + j, col1) = bj;
+				A(row + j, col2) = -bj;
+
+				// C1 Continuity
+				A(row + d + j, col1) = bdj;
+				A(row + d + j, col2) = -bdj;
+
+				// C2 Continuity
+				A(row + 2*d + j, col1) = bddj;
+				A(row + 2*d + j, col2) = -bddj;
+
+				// TODO: Handle velocity case
+			}
+		}
+	}
+
+	row += 3*d;
+
+	// Boundary condition at t1
+	const Keyframe& km = keyframes.back();
+	for (int i = 0; i < d; i++)
+	{
+		float lambda = eigenValues(i);
+		float delta = 0.5f * (parms.alpha + parms.beta * lambda);
+		for (int j = 0; j < 4; j++)
+		{
+			int col = getCoeffIdx(keyframes.size() - 1, i, j);
+			A(row + i, col) = b(km.frame, delta, lambda, j);
+			if (km.hasVel)
+				A(row + d + i, col) = bDot(km.frame, delta, lambda, j);
+		}
+	}
+
+	km.detail->getPos3AsArray(km.detail->getPointRange(), positions);
+	Eigen::Map<Eigen::VectorXf> pm(positions.data()->data(), dof);
+
+	B.segment(row, d) = phi * M * pm;
+	//if (km.hasVel)
+	//	B.segment(row+d, d) = Eigen::VectorXf::Zero(d);
+
+	if (progress.wasInterrupted())
+		return;
+
+	// NOTE: BDCSVD preferred for larger matrix
+	Eigen::BDCSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
+	int subspace_dim = numCoeffs - numConditions;
+	
+	std::cout << svd.info() << std::endl;
+
+	// Eigen::MatrixXf U = svd.matrixV()(Eigen::all, Eigen::seq(numCoeffs - subspace_dim, Eigen::last));
+
+	// Eigen::VectorXf w0 = svd.solve(B);
+
+	// std::cout << w0 << std::endl;
+
+	//if (progress.wasInterrupted())
+	//	return;
+
+	//// NOTE: Is passing in *this the best way to approach functor?
+	//WigglyFunctor functor(*this, U, w0);
+	//Eigen::NumericalDiff<WigglyFunctor> numDiff(functor);
+	//Eigen::LevenbergMarquardt<Eigen::NumericalDiff<WigglyFunctor>, float> lm(numDiff);
+
+	//// Initial guess
+	//Eigen::VectorXf xmin = Eigen::VectorXf::Zero(numCoeffs);
+
+	//lm.minimize(xmin);
+
+	//coefficients = xmin;  // TODO: Can we directly minimize on the member variable?
+}
+
+/*
+Compute eigenvalues and eigenvectors based on stiffness and mass matrices
+as part of the precompute step. This only needs to be recomputed if the mesh changes.
+*/
+void Wiggly::preCompute() {
+
+	UT_AutoInterrupt progress1("Assembling stiffness and mass matrices.");
+
+	int dof = getDof();
+
+	/*
+	Compute the global stiffness matrix of the tetrahedral mesh.
+	Adopted from http://knapiontek.github.io/fem.pdf
+	*/
+	K = Eigen::MatrixXf::Zero(dof, dof);
+
+	/*
+	Compute the global mass matrix of the tetrahedral mesh.
+	Adopted from 12.2.8 in Finite Element Method in Engineering (6th Edition)
+	*/
+	M = Eigen::MatrixXf::Zero(dof, dof);
+
+	const float EA = 1000;
+
+	std::unordered_set<int> visitedEdges;
+
+	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
+	{
+		if (progress1.wasInterrupted())
+			return;
+
+		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
+
+		// TODO: What is the refpt for?
+		fpreal vol = parms.p * tet->calcVolume(UT_Vector3(0, 0, 0)) / 20.0;
+
+		for (int i = 0; i < 6; i++)
+		{
+			int i0; int i1;
+			tet->getEdgeIndices(i, i0, i1);
+
+			const GA_Index pt1idx = tet->getPointIndex(i0);
+			const GA_Index pt2idx = tet->getPointIndex(i1);
+
+			if (!visitedEdges.insert(
+				pt1idx < pt2idx ? CANTOR(pt1idx, pt2idx) : CANTOR(pt2idx, pt1idx)).second)
+				continue;
+
+			const UT_Vector3& point1 = tet->getPos3(i0);
+			const UT_Vector3& point2 = tet->getPos3(i1);
+
+			int p1x = 3 * pt1idx + 0;
+			int p1y = 3 * pt1idx + 1;
+			int p1z = 3 * pt1idx + 2;
+			int p2x = 3 * pt2idx + 0;
+			int p2y = 3 * pt2idx + 1;
+			int p2z = 3 * pt2idx + 2;
+
+			float dx = point2.x() - point1.x();
+			float dy = point2.y() - point1.y();
+			float dz = point2.z() - point1.z();
+			float l = 1.0 / sqrt(dx * dx + dy * dy + dz * dz);
+
+			float cx = dx * l;
+			float cy = dy * l;
+			float cz = dz * l;
+
+			float cxx = cx * cx * EA * l;
+			float cyy = cy * cy * EA * l;
+			float czz = cz * cz * EA * l;
+			float cxy = cx * cy * EA * l;
+			float cxz = cx * cz * EA * l;
+			float cyz = cy * cz * EA * l;
+
+			K(p1x, p1x) += cxx;
+			K(p1y, p1x) += cxy;
+			K(p1z, p1x) += cxz;
+			K(p2x, p1x) -= cxx;
+			K(p2y, p1x) -= cxy;
+			K(p2z, p1x) -= cxz;
+
+			K(p1x, p1y) += cxy;
+			K(p1y, p1y) += cyy;
+			K(p1z, p1y) += cyz;
+			K(p2x, p1y) -= cxy;
+			K(p2y, p1y) -= cyy;
+			K(p2z, p1y) -= cyz;
+
+			K(p1x, p1z) += cxz;
+			K(p1y, p1z) += cyz;
+			K(p1z, p1z) += czz;
+			K(p2x, p1z) -= cxz;
+			K(p2y, p1z) -= cyz;
+			K(p2z, p1z) -= czz;
+
+			K(p1x, p2x) -= cxx;
+			K(p1y, p2x) -= cxy;
+			K(p1z, p2x) -= cxz;
+			K(p2x, p2x) += cxx;
+			K(p2y, p2x) += cxy;
+			K(p2z, p2x) += cxz;
+
+			K(p1x, p2y) -= cxy;
+			K(p1y, p2y) -= cyy;
+			K(p1z, p2y) -= cyz;
+			K(p2x, p2y) += cxy;
+			K(p2y, p2y) += cyy;
+			K(p2z, p2y) += cyz;
+
+			K(p1x, p2z) -= cxz;
+			K(p1y, p2z) -= cyz;
+			K(p1z, p2z) -= czz;
+			K(p2x, p2z) += cxz;
+			K(p2y, p2z) += cyz;
+			K(p2z, p2z) += czz;
+
+			M(p1x, p1x) += 2 * vol;
+			M(p1y, p1y) += 2 * vol;
+			M(p1z, p1z) += 2 * vol;
+
+			M(p1x, p2x) += 1 * vol;
+			M(p1y, p2y) += 1 * vol;
+			M(p1z, p2z) += 1 * vol;
+
+			M(p2x, p1x) += 1 * vol;
+			M(p2y, p1y) += 1 * vol;
+			M(p2z, p1z) += 1 * vol;
+			
+			M(p2x, p2x) += 2 * vol;
+			M(p2y, p2y) += 2 * vol;
+			M(p2z, p2z) += 2 * vol;
+		}
+	}
+
+	// std::cout << K << std::endl;
+	// std::cout << M << std::endl;
+
+	// printf("Determinant: %f\n", K.determinant());
+
+	UT_AutoInterrupt progress2("Finding eigenvalues and eigen vectors.");
+	if (progress2.wasInterrupted())
+		return;
 
 	// Find eigenvalues and eigenvectors
 	Eigen::GeneralizedEigenSolver<Eigen::MatrixXf> ges;
@@ -506,7 +661,4 @@ void Wiggly::compute() {
 
 	eigenValues = ges.eigenvalues().real();
 	eigenModes = ges.eigenvectors().real();
-
-	computeCoefficients();
-
 }

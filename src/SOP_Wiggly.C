@@ -2,6 +2,7 @@
 #include <UT/UT_Interrupt.h>
 #include <UT/UT_Matrix.h>
 #include <UT/UT_Array.h>
+#include <UT/UT_Assert.h>
 #include <GU/GU_Detail.h>
 #include <GU/GU_PrimPoly.h>
 #include <GU/GU_PrimPacked.h>
@@ -11,6 +12,7 @@
 #include <OP/OP_Operator.h>
 #include <OP/OP_OperatorTable.h>
 #include <OP/OP_AutoLockInputs.h>
+#include <SOP/SOP_Error.h>
 
 #include <memory>
 #include <algorithm>
@@ -47,6 +49,16 @@ static const char* theDsFile = R"THEDSFILE(
 {
         name        parameters
         parm {
+            name    "massdensity"      // Internal parameter name
+            label   "Mass Density" // Descriptive parameter name for user interface
+            type    float
+            default { "1000.0" }     // Default for this parameter on new nodes
+            range   { 0! 5000.0 }   // The value is prevented from going below 2 at all.
+                                // The UI slider goes up to 50, but the value can go higher.
+            export  all         // This makes the parameter show up in the toolbox
+                                // above the viewport when it's in the node's state.
+       }
+       parm {
             name    "massmul"      // Internal parameter name
             label   "Mass Multiplier" // Descriptive parameter name for user interface
             type    float
@@ -136,19 +148,50 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 		GU_Detail* detail = cookparms.gdh().gdpNC();
 		const GU_Detail* bgdp = cookparms.inputGeo(1);  // constraints
 
+		if (bgdp->getNumPrimitives() < 2)
+		{
+			cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Need at least two keyframes.");
+			return;
+		}
+
 		CH_Manager* chman = OPgetDirector()->getChannelManager();
 
 		fpreal f = chman->getSample(cookparms.getCookTime());
 
-		if (detail->getUniqueId() != sopcache->prevInput1Id || bgdp->getUniqueId() != sopcache->prevInput2Id)
+		bool recompute = false;
+
+		if (detail->getUniqueId() != sopcache->prevInput1Id)
 		{
+			// TODO: Check if the parameter has changed too
+
+			// If the mesh has changed then we need to recompute everything
+			recompute = true;
+
 			// Clear cache data
 			sopcache->wigglyObj.reset();
 
+			WigglyParms parms;
+			parms.alpha = sopparms.getMassmul();
+			parms.beta = sopparms.getStiffnessmul();
+			parms.d = sopparms.getModesnum();
+
+			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
+
+			UT_AutoInterrupt interrupt("Pre computing");
+			if (interrupt.wasInterrupted())
+				return;
+
+			sopcache->wigglyObj->preCompute();
+
+			sopcache->prevInput1Id = detail->getUniqueId();
+		}
+
+		if (recompute || bgdp->getUniqueId() != sopcache->prevInput2Id)
+		{
 			// GET THE KEYFRAMES DATA FROM SECOND INPUT
 			GA_ROHandleI f_h(bgdp, GA_ATTRIB_POINT, "frame");
 
-			Keyframes keyframes;
+			Keyframes& keyframes = sopcache->wigglyObj->getKeyframes();
 
 			for (GA_Iterator it(bgdp->getPrimitiveRange()); !it.atEnd(); ++it)
 			{
@@ -162,7 +205,7 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 
 				keyframe.hasPos = true;
 				keyframe.hasVel = packedDetail->findAttribute(GA_ATTRIB_POINT, "v") != nullptr;
-				
+
 				GA_ROHandleI pt_h(packedDetail, GA_ATTRIB_POINT, "original");
 
 				GA_Offset ptoff;
@@ -180,19 +223,15 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			}
 
 			// TODO: Validate keyframes
-
 			std::sort(keyframes.begin(), keyframes.end());
 
-			WigglyParms parms;
-			parms.alpha = sopparms.getMassmul();
-			parms.beta = sopparms.getStiffnessmul();
-			parms.dim = sopparms.getModesnum();
+			// Temporary: hard code velocity for now
+			keyframes.front().hasVel = true;
+			keyframes.back().hasVel = true;
 
-			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, keyframes, parms);
-			// sopcache->wigglyObj->compute();
+			sopcache->wigglyObj->compute();
 
-			sopcache->prevInput1Id = detail->getUniqueId();
-			sopcache->prevInput2Id = detail->getUniqueId();
+			sopcache->prevInput2Id = bgdp->getUniqueId();
 		}
 
 		// Loop through all points and modify the value

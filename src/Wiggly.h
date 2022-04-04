@@ -41,25 +41,29 @@ namespace HDK_Wiggly {
 		float alpha;
 		float beta;
 		float g = 9.81;
-		int dim = 20;
+		int d = 20;
 		float cA = 1.0;
 		float cB = 1.0;
+		float p = 1000;
 	};
 
 	class Wiggly
 	{
 
 	public:
-		Wiggly(const GU_Detail* mgdp, const Keyframes& keyframes, const WigglyParms& parms) 
-			: mesh(mgdp), keyframes(keyframes), parms(parms) {}
+		Wiggly(const GU_Detail* mgdp, const WigglyParms& sopparms) 
+			: mesh(mgdp), parms(sopparms) {}
 		~Wiggly() {}
 
 		void compute();
+		void preCompute();
+
 		VecX u(const float t);
 		float totalEnergy(const VecX& c) { return dynamicsEnergy(c) + keyframeEnergy(c); }
 		float integrand(const float t, const float delta, const float lambda, const VecX& coeffs);
 		int getNumPoints() { return mesh->getNumPoints(); }
-		
+		Keyframes& getKeyframes() { return keyframes; }
+
 	protected:
 
 		// Basis Functions
@@ -82,25 +86,27 @@ namespace HDK_Wiggly {
 		float dynamicsEnergy(const VecX& coeffs);
 		float integralEnergy(const float delta, const float lambda, const VecX& coeffs);
 
-		void computeStiffnessMatrix();
-		void computeMassMatrix();
-		void computeCoefficients();
-
 		int getKeyframeIdx(const float t);
 		int getNumCoeffs() { return 4 * (keyframes.size() - 1); }
-
+		/* Get the total number of DOF (i.e. x, y, z for every node)*/
+		int getDof() { return 3 * getNumPoints(); }
+		/* Get the total number of coefficients across all wiggly splines */
+		int getTotalNumCoeffs() { return 4 * (keyframes.size() - 1) * parms.d; }
+		/* Get the flattened idx of a coefficient */
+		int getCoeffIdx(const float k, const float d, const float l) { return k * 4 * parms.d + 4 * d + l; }
+			 
 		UT_Vector3 getPosConstraint(const GU_Detail* detail, const GA_Index ptIdx);
 		UT_Vector3 getVelConstraint(const GU_Detail* detail, const GA_Index ptIdx);
 
 		const GU_Detail* mesh;
-		const Keyframes& keyframes;
-		const WigglyParms& parms;
+		Keyframes keyframes;
+		const WigglyParms parms;
 
 		Eigen::MatrixXf M;
 		Eigen::MatrixXf K;
 
-		Eigen::VectorXf eigenValues;
-		Eigen::MatrixXf eigenModes;
-		Eigen::VectorXf coefficients;  //4*m*d
+		Eigen::VectorXf eigenValues;   // getDof() x 1
+		Eigen::MatrixXf eigenModes;    // getDof() x getDof()
+		Eigen::VectorXf coefficients;  // getDof() x 1
 	};
 }
