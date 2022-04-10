@@ -1,7 +1,6 @@
 #include "GU/GU_PrimTetrahedron.h"
 #include "UT/UT_Interrupt.h"
 
-
 #include "Wiggly.h"
 
 #include "Eigen/Eigenvalues"
@@ -11,6 +10,9 @@
 #include "unsupported/Eigen/NumericalDiff"
 
 #include "gsl/gsl_integration.h"
+#include "gsl/gsl_multimin.h"
+
+#include <dlib/optimization.h>
 
 #include <iostream>
 #include <unordered_set>
@@ -37,28 +39,56 @@ struct WigglyFunctor
 		ValuesAtCompileTime = Eigen::Dynamic
 	};
 
-	WigglyFunctor(Wiggly& obj, const Eigen::MatrixXf& U, const Eigen::VectorXf& w0) 
-		: wiggly(obj), U(U), w0(w0) {}
+	WigglyFunctor(Wiggly& obj, const Eigen::MatrixXf& U, const Eigen::VectorXf& w0, const int& dim) 
+		: wiggly(obj), U(U), w0(w0), subspaceDim(subspaceDim) {}
 
 	int operator()(const Eigen::VectorXf& z, Eigen::VectorXf& fvec) const
 	{
 		//NOTE: The algorithm will square fvec internally. Problematic?
 		fvec(0) = wiggly.totalEnergy(w0 + U*z);
+		std::cout << "energy: " << z << std::endl;
 		return 0;
 	}
 
 	Wiggly& wiggly;
 	const Eigen::MatrixXf& U;
 	const Eigen::VectorXf& w0;
+	const int subspaceDim;
 
-	int inputs() const { return wiggly.getNumPoints(); }// inputs is the dimension of x.
+
+	int inputs() const { return subspaceDim; } // inputs is the dimension of x.
 	int values() const { return 1; } // "values" is the number of f_i and
+};
+
+
+typedef dlib::matrix<double, 0, 1> column_vector;
+
+struct ObjFunctor
+{
+	ObjFunctor(Wiggly& obj, const Eigen::MatrixXf& U, const Eigen::VectorXf& w0, const int& dim)
+		: wiggly(obj), U(U), w0(w0), subDim(dim) {}
+
+	double operator()(const column_vector& v) const
+	{
+		Eigen::VectorXf z = Eigen::VectorXf::Zero(subDim);
+		for (int i = 0; i < subDim; i++)
+			z(i) = v(i);
+
+		float e = wiggly.totalEnergy(w0 + U * z);
+
+		return e;
+	}
+
+	Wiggly& wiggly;
+	const Eigen::MatrixXf& U;
+	const Eigen::VectorXf& w0;
+	const int subDim;
 };
 
 /*
 Struct for storing data that can be passed to the gsl integration function
 */
-struct gsl_fdata
+struct gsl_integrand_data
 {
 	Wiggly* w;
 	float lambda;
@@ -66,44 +96,83 @@ struct gsl_fdata
 	const VecX* coeffs;
 };
 
+struct gsl_objective_data
+{
+	Wiggly* w;
+	Eigen::MatrixXf U;
+	Eigen::VectorXf w0;
+	int subspaceDim;
+};
+
 /*
 gsl integration function
 */
-double f(double t, void* params)
+double gsl_integrand(double t, void* params)
 {
-	gsl_fdata* data = (gsl_fdata*)params;
-	return data->w->integrand(t, data->delta, data->lambda, *data->coeffs);
+	// gsl_integrand_data* data = (gsl_integrand_data*)params;
+	
+	// return data->w->integrand(t, data->delta, data->lambda, *data->coeffs);
+	return sin(t);
 }
+
+//double gsl_objective(const gsl_vector, )
 
 /*
 Get the current keyframe index given the time
 */
-int Wiggly::getKeyframeIdx(const float t)
+int Wiggly::getSegmentIdx(const float t)
 {
 	for (int i = 0; i < keyframes.size() - 1; ++i)
-		if (keyframes[i].frame <= t && keyframes[i + 1].frame >= t)
+		if (keyframes[i].t <= t && keyframes[i + 1].t >= t)
 			return i;
 	return 0;
 }
+
+/*
+Get the normalized time (i.e 0 - 1) give the frame number
+*/
+float Wiggly::getNormalizedTime(const float frame)
+{
+	return (frame - keyframes.front().frame) / (keyframes.back().frame - keyframes.front().frame);
+}
+
 
 /*
 Basis function
 */
 float Wiggly::b(const float t, const float delta, const float lambda, int i)
 {
-	int sign1 = i <= 1 ? 1 : - 1;
+	int sign1 = i <= 1 ? -1 : 1;
 	int sign2 = i % 2 == 0 ? 1 : -1;
 	
-	if (delta == 0 and lambda == 0)
+	// delta == 0 && lambda == 0
+	if (abs(delta) < EPS && abs(lambda) < EPS)
 		return pow(t, i);
+
+	// delta != 0 && lambda == 0
+	if (abs(delta) > EPS && abs(lambda) < EPS)
+	{
+		switch(i){
+		case 0:
+			return 1;
+		case 1:
+			return t;
+		case 2:
+			return exp(-2 * delta * t) / (4 * delta * delta);
+		case 3:
+			return exp(2 * delta * t) / (4 * delta * delta);
+		default:
+			return pow(t, i);
+		}
+	}
 
 	float tmp = delta * delta - lambda;
 	if (tmp > 0)
-		return exp(t * ((sign1 * delta) + (sign2 * sqrt(tmp))));
-	else if (sign2 == 1)
+		return exp(t * (sign1 * delta + sign2 * sqrt(tmp)));
+	else if (sign2 == 1) // b1 & b3
 		return exp(sign1 * t * delta) * cos(t * sqrt(-tmp));
-	else
-		return -exp(sign1 * t * delta) * sin(t * sqrt(-tmp));
+	else // b2 & b4
+		return exp(sign1 * t * delta) * sin(t * sqrt(-tmp));
 }
 
 /*
@@ -111,11 +180,27 @@ First derivative of the basis function
 */
 float Wiggly::bDot(const float t, const float delta, const float lambda, int i)
 {
-	int sign1 = i <= 1 ? 1 : -1;
+	int sign1 = i <= 1 ? -1 : 1;
 	int sign2 = i % 2 == 0 ? 1 : -1;
 
-	if (delta == 0 and lambda == 0)
-		return pow(t, i);
+	if (abs(delta) < EPS && abs(lambda) < EPS)
+		return i == 0 ? 0 : i * pow(t, i - 1);
+
+	if (abs(delta) > EPS && abs(lambda) < EPS)
+	{
+		switch (i) {
+		case 0:
+			return 0;
+		case 1:
+			return 1;
+		case 2:
+			return exp(-2 * delta * t) / (-2 * delta);
+		case 3:
+			return exp(2 * delta * t) / (2 * delta);
+		default:
+			return pow(t, i);
+		}
+	}
 
 	float tmp = delta * delta - lambda;
 	if (tmp > 0)
@@ -129,7 +214,7 @@ float Wiggly::bDot(const float t, const float delta, const float lambda, int i)
 		if (sign2 == 1)
 			return exp(sign1 * t * delta) * ((sign1 * delta * cos(t * expr)) - (expr * sin(t * expr)));
 		else
-			return exp(sign1 * t * delta) * (-(expr * cos(t * expr)) - (sign1 * delta * sin(t * expr)));
+			return -exp(sign1 * t * delta) * (-(expr * cos(t * expr)) - (sign1 * delta * sin(t * expr)));
 	}
 }
 
@@ -138,11 +223,27 @@ Second derivative of the basis function
 */
 float Wiggly::bDDot(const float t, const float delta, const float lambda, int i)
 {
-	int sign1 = i <= 1 ? 1 : -1;
+	int sign1 = i <= 1 ? -1 : 1;
 	int sign2 = i % 2 == 0 ? 1 : -1;
 
-	if (delta == 0 and lambda == 0)
-		return pow(t, i);
+	if (abs(delta) < EPS && abs(lambda) < EPS)
+		return i <= 1 ? 0 : i * (i - 1) * pow(t, i - 2);
+
+	if (abs(delta) > EPS && abs(lambda) < EPS)
+	{
+		switch (i) {
+		case 0:
+			return 0;
+		case 1:
+			return 0;
+		case 2:
+			return exp(-2 * delta * t);
+		case 3:
+			return exp(2 * delta * t);
+		default:
+			return pow(t, i);
+		}
+	}
 
 	float tmp = delta * delta - lambda;
 	if (tmp > 0)
@@ -157,42 +258,40 @@ float Wiggly::bDDot(const float t, const float delta, const float lambda, int i)
 		if (sign2 == 1)
 			return exp(sign1 * t) * ((dsqExpr * cos(t * expr)) + (2 * delta * expr * (-sign1) * sin(t * expr)));
 		else
-			return -sign1 * exp(sign1 * t * delta) * ((2 * delta * expr * cos(t * expr)) + (sign1 * dsqExpr * sin(t * expr)));
+			return sign1 * exp(sign1 * t * delta) * ((2 * delta * expr * cos(t * expr)) + (sign1 * dsqExpr * sin(t * expr)));
 	}
 }
-
 
 /*
 Compute the wiggly spline value
 */
-float Wiggly::wiggly(const float t, const float delta, const float lambda, const VecX& coeffs)
+float Wiggly::wiggly(const float t, const int d, const float delta, const float lambda, const VecX& coeffs)
 {
-	int i = getKeyframeIdx(t);
+	int k = getSegmentIdx(t);
 
 	// Evaluate spline
-	float c = lambda != 0 ? parms.g / abs(lambda) : 0;
-	
 	float sum = 0;
-	sum += coeffs[4 * i + 0] * b(t, delta, lambda, 0);
-	sum += coeffs[4 * i + 1] * b(t, delta, lambda, 1);
-	sum += coeffs[4 * i + 2] * b(t, delta, lambda, 2);
-	sum += coeffs[4 * i + 3] * b(t, delta, lambda, 3);
+	
+	sum += coeffs[getCoeffIdx(k, d, 0)] * b(t, delta, lambda, 0);
+	sum += coeffs[getCoeffIdx(k, d, 1)] * b(t, delta, lambda, 1);
+	sum += coeffs[getCoeffIdx(k, d, 2)] * b(t, delta, lambda, 2);
+	sum += coeffs[getCoeffIdx(k, d, 3)] * b(t, delta, lambda, 3);
 
-	return sum - c;
+	return sum - getC(lambda);
 }	
 
 /*
 Compute the first derivative of the wiggly spline
 */
-float Wiggly::wigglyDot(const float t, const float delta, const float lambda, const VecX& coeffs)
+float Wiggly::wigglyDot(const float t, const int d, const float delta, const float lambda, const VecX& coeffs)
 {
-	int i = getKeyframeIdx(t);
+	int k = getSegmentIdx(t);
 
 	float sum = 0;
-	sum += coeffs[4 * i + 0] * bDot(t, delta, lambda, 0);
-	sum += coeffs[4 * i + 1] * bDot(t, delta, lambda, 1);
-	sum += coeffs[4 * i + 2] * bDot(t, delta, lambda, 2);
-	sum += coeffs[4 * i + 3] * bDot(t, delta, lambda, 3);
+	sum += coeffs[getCoeffIdx(k, d, 0)] * bDot(t, delta, lambda, 0);
+	sum += coeffs[getCoeffIdx(k, d, 1)] * bDot(t, delta, lambda, 1);
+	sum += coeffs[getCoeffIdx(k, d, 2)] * bDot(t, delta, lambda, 2);
+	sum += coeffs[getCoeffIdx(k, d, 3)] * bDot(t, delta, lambda, 3);
 
 	return sum;
 }
@@ -200,27 +299,31 @@ float Wiggly::wigglyDot(const float t, const float delta, const float lambda, co
 /*
 Compute the first derivative of the wiggly spline
 */
-float Wiggly::wigglyDDot(const float t, const float delta, const float lambda, const VecX& coeffs)
+float Wiggly::wigglyDDot(const float t, const int d, const float delta, const float lambda, const VecX& coeffs)
 {
-	int i = getKeyframeIdx(t);
+	int k = getSegmentIdx(t);
 
 	float sum = 0;
-	sum += coeffs[4 * i + 0] * bDDot(t, delta, lambda, 0);
-	sum += coeffs[4 * i + 1] * bDDot(t, delta, lambda, 1);
-	sum += coeffs[4 * i + 2] * bDDot(t, delta, lambda, 2);
-	sum += coeffs[4 * i + 3] * bDDot(t, delta, lambda, 3);
+	sum += coeffs[getCoeffIdx(k, d, 0)] * bDDot(t, delta, lambda, 0);
+	sum += coeffs[getCoeffIdx(k, d, 1)] * bDDot(t, delta, lambda, 1);
+	sum += coeffs[getCoeffIdx(k, d, 2)] * bDDot(t, delta, lambda, 2);
+	sum += coeffs[getCoeffIdx(k, d, 3)] * bDDot(t, delta, lambda, 3);
 
 	return sum;
 }
 
-VecX Wiggly::u(const float t)
+VecX Wiggly::u(const float f)
 {
-	VecX displacement = VecX::Zero(3 * getNumPoints());
-	for (int i = 0; i < getNumPoints(); i++)
-	{
-		displacement[3 * i] = sin(t);
-	}
-	return displacement;
+
+	float t = getNormalizedTime(f);
+	return u(t, coefficients);
+	 
+	//VecX displacement = VecX::Zero(3 * getNumPoints());
+	//for (int i = 0; i < getNumPoints(); i++)
+	//{
+	//	displacement[3 * i] = sin(t);
+	//}
+	//return displacement;
 }
 
 /*
@@ -228,12 +331,12 @@ Compute the displacement vector
 */
 VecX Wiggly::u(const float t, const VecX& coeffs)
 {
-	VecX out = Eigen::VectorXf::Zero(3 * getNumPoints());
+	VecX out = Eigen::VectorXf::Zero(getDof());
 	for (int i = 0; i < parms.d; i++)
 	{
-		float lambda = eigenValues(i);
-		float delta = 0.5 * (parms.alpha + parms.beta * lambda);
-		out += wiggly(t, delta, lambda, coeffs) * eigenModes.col(i);
+		float lambda = getLambda(i);
+		float delta = getDelta(lambda);
+		out += wiggly(t, i, delta, lambda, coeffs) * eigenModes.col(i);
 	}
 	return out;
 }
@@ -243,14 +346,23 @@ Compute the velocity vector
 */
 VecX Wiggly::uDot(const float t, const VecX& coeffs)
 {
-	VecX out = Eigen::VectorXf::Zero(3 * getNumPoints());
+	VecX out = Eigen::VectorXf::Zero(getDof());
 	for (int i = 0; i < parms.d; i++)
 	{
-		float lambda = eigenValues(i);
-		float delta = 0.5 * (parms.alpha + parms.beta * lambda);
-		out += wigglyDot(t, delta, lambda, coeffs) * eigenModes.col(i);
+		float lambda = getLambda(i);
+		float delta = getDelta(lambda);
+		out += wigglyDot(t, i, delta, lambda, coeffs) * eigenModes.col(i);
 	}
 	return out;
+}
+
+float Wiggly::totalEnergy(const VecX& c)
+{
+	float d = dynamicsEnergy(c);
+	float k = keyframeEnergy(c);
+	// std::cout << "d: " << d << "   k: " << k << std::endl;
+	float e = d + k;
+	return e;
 }
 
 /*
@@ -259,31 +371,33 @@ Compute the energy based on constraints
 float Wiggly::keyframeEnergy(const VecX& coeffs)
 {
 	float total = 0;
-	for (int i = 0; i < keyframes.size(); ++i)
+	for (Keyframe& k : keyframes)
 	{
-		float frame = keyframes[i].frame;
-		Eigen::VectorXf uPos = u(frame, coeffs);
-		Eigen::VectorXf uVel = uDot(frame, coeffs);
+		Eigen::VectorXf uPos = u(k.t, coeffs);
+		Eigen::VectorXf uVel = uDot(k.t, coeffs);
+
+		GA_ROHandleV3 u_h(k.detail, GA_ATTRIB_POINT, "u");
+		GA_ROHandleV3 v_h(k.detail, GA_ATTRIB_POINT, "v");
 
 		float posDiff = 0, velDiff = 0;
-		for (int j = 0; j < keyframes[i].points.size(); ++j)
+		for (int j = 0; j < k.points.size(); ++j)
 		{
-			int ptIdx = keyframes[i].points[j];
+			int ptIdx = k.points[j];
 			if (ptIdx < 0) 
 				continue;
 
-			if (keyframes[i].hasPos) 
+			if (k.hasPos) 
 			{
-				UT_Vector3 ak = getPosConstraint(keyframes[i].detail, ptIdx);
+				UT_Vector3 ak = u_h.get(k.detail->pointOffset(ptIdx));
 				UT_Vector3 uk = UT_Vector3(uPos(3 * ptIdx), uPos(3 * ptIdx + 1), uPos(3 * ptIdx + 2));
-				posDiff += (ak - uk).length2();
+				posDiff += ak.distance2(uk);
 			}
 
-			if (keyframes[i].hasVel)
+			if (k.hasVel)
 			{
-				UT_Vector3 ak = getVelConstraint(keyframes[i].detail, ptIdx);
-				UT_Vector3 uk = UT_Vector3(uVel(3 * ptIdx), uVel(3 * ptIdx + 1), uVel(3 * ptIdx + 2));
-				velDiff += (ak - uk).length2();
+				UT_Vector3 bk = v_h.get(k.detail->pointOffset(ptIdx));
+				UT_Vector3 vk = UT_Vector3(uVel(3 * ptIdx), uVel(3 * ptIdx + 1), uVel(3 * ptIdx + 2));
+				velDiff += bk.distance2(vk);
 			}
 		}
 		total += posDiff * parms.cA;
@@ -295,43 +409,37 @@ float Wiggly::keyframeEnergy(const VecX& coeffs)
 /*
 The integrand for the energy minimizing integrand
 */
-float Wiggly::integrand(const float t, const float delta, const float lambda, const VecX& coeffs)
+float Wiggly::integrand(const float t, const int d, const float delta, const float lambda, const VecX& coeffs)
 {
-	float tmp = wigglyDDot(t, delta, lambda, coeffs) + 
-		2 * delta * wigglyDot(t, delta, lambda, coeffs) + 
-		lambda * wiggly(t, delta, lambda, coeffs) + parms.g;
-	return 0.5 * tmp * tmp;
+	float tmp = wigglyDDot(t, d, delta, lambda, coeffs) + 
+		2 * delta * wigglyDot(t, d, delta, lambda, coeffs) + 
+		lambda * wiggly(t, d, delta, lambda, coeffs) + parms.g;
+	return tmp * tmp;
 }
-
 
 /*
 Evaluate the energy of a wiggly spline based on the integral
 */
-float Wiggly::integralEnergy(const float lambda, const float delta, const VecX& coeffs)
-{
-	gsl_integration_workspace* w = gsl_integration_workspace_alloc(1000);
+float Wiggly::integralEnergy(const int d, const float delta, const float lambda, const VecX& coeffs)
+{	
+	int intervals = 100;
 
-	double result, error;
-	double expected = -4.0;
-	double alpha = 1.0;
+	float a = keyframes.front().t;  // this should be 0 after normalizing
+	float b = keyframes.back().t;  // this should be 1 after normalizing
 
-	gsl_function F;
-	F.function = &f;
+	float stepSize = (b - a) / float(intervals);
 
-	gsl_fdata data;
-	data.w = this;
-	data.delta = delta;
-	data.lambda = lambda;
-	data.coeffs = &coeffs;
+	float t = a;
+	float sum = integrand(a, d, delta, lambda, coeffs) + integrand(b, d, delta, lambda, coeffs);
+	
+	for (int i = 1; i <= intervals-1; ++i)
+	{
+		sum += 2.0 * integrand(a + i*stepSize, d, delta, lambda, coeffs);
+	}
 
-	F.params = &data;
-
-	float a = keyframes[0].frame;
-	float b = keyframes[keyframes.size() - 1].frame;
-
-	gsl_integration_qags(&F, a, b, 0, 1e-7, 1000, w, &result, &error);
-
-	return float(result);
+	sum = sum * stepSize * 0.25;
+	
+	return sum;
 }
 
 /*
@@ -341,31 +449,16 @@ float Wiggly::dynamicsEnergy(const VecX& coeffs)
 {
 	float total = 0;
 	int numCoeff = getNumCoeffs();
+
 	for (int i = 0; i < parms.d; ++i)
 	{
-		float lambda = eigenValues(i);
-		float delta = 0.5f * (parms.alpha + parms.beta * lambda);
-		float e = integralEnergy(delta, lambda, coeffs.segment(numCoeff * i, numCoeff));
-		total += e * e;
+		float lambda = getLambda(i);
+		float delta = getDelta(lambda);
+		float e = integralEnergy(i, delta, lambda, coeffs);
+		total += e;
 	}
-	return 0.5*total;
-}
 
-/*
-Helper to get the position constraint for a given point index.
-*/
-UT_Vector3 Wiggly::getPosConstraint(const GU_Detail* detail, const GA_Index ptidx)
-{
-	return detail->getPos3(detail->pointOffset(ptidx));
-}
-
-/*
-Helper to get the velocity constraint for a given velocity index.
-*/
-UT_Vector3 Wiggly::getVelConstraint(const GU_Detail* detail, const GA_Index ptidx)
-{
-	GA_ROHandleV3 v_h(detail, GA_ATTRIB_POINT, "v");
-	return v_h.get(detail->pointOffset(ptidx));
+	return total;
 }
 
 /*
@@ -373,6 +466,8 @@ Compute the wiggly splines' coefficients based on the sparse keyframes.
 This should be recomputed when the mesh changes or the keyframes change.
 */
 void Wiggly::compute() {
+
+ 
 
 	UT_AutoInterrupt progress("Computing wiggly spline coefficients");
 
@@ -386,37 +481,39 @@ void Wiggly::compute() {
 
 	Eigen::MatrixXf A = Eigen::MatrixXf::Zero(numConditions, numCoeffs);
 	Eigen::VectorXf B = Eigen::VectorXf::Zero(numConditions);
+	Eigen::VectorXf c = Eigen::VectorXf::Zero(d);
+	Eigen::MatrixXf phiT = eigenModes(Eigen::all, Eigen::seqN(0, d)).transpose();  // This should be d x 3n
+
+	std::cout << "------eigen check--------" << std::endl << phiT * M * phiT.transpose() << std::endl;
+	std::cout << "------eigen check--------" << std::endl << phiT.transpose() * phiT * M << std::endl;
 
 	int row = 0; // The row correlates to the number of linear conditions
 
 	// Boundary condition at t0
-	const Keyframe& k0 = keyframes.front();
+	Keyframe& k0 = keyframes.front();
+	k0.t = getNormalizedTime(k0.frame);  // TODO: Where's the best place to do this?
 	for (int i = 0; i < d; i++)
 	{
+		float lambda = getLambda(i);
+		float delta = getDelta(lambda);
+		c(i) = getC(lambda);
 
-		float lambda = eigenValues(i);
-		float delta = 0.5f * (parms.alpha + parms.beta * lambda);
-
-		std::cout << "Dim: " << i << " Lambda: " << lambda << " Delta: " << delta << std::endl;
 		for (int j = 0; j < 4; j++)
 		{
 			int col = getCoeffIdx(0, i, j);
-			float tmp = b(k0.frame, delta, lambda, j);
-			std::cout << " Basis " << j << " " << tmp;
-			A(row + i, col) = tmp;
+			A(row + i, col) = b(k0.t, delta, lambda, j);
 			if (k0.hasVel)
-				A(row + d + i, col) = bDot(k0.frame, delta, lambda, j);
+				A(row + d + i, col) = bDot(k0.t, delta, lambda, j);
 		}
-		std::cout << std::endl;
 	}
 
-	UT_Array<UT_Vector3F> positions;
-	k0.detail->getPos3AsArray(k0.detail->getPointRange(), positions);
-	Eigen::Map<Eigen::VectorXf> p0(positions.data()->data(), dof);
+	UT_Array<UT_Vector3F> displacements;
+	const GA_Attribute* u_attrib = k0.detail->findFloatTuple(GA_ATTRIB_POINT, "u", 3);
+	// TODO: Might need to account for incorrect point order?
+	k0.detail->getAttributeAsArray<UT_Vector3F>(u_attrib, k0.detail->getPointRange(), displacements);
+	Eigen::Map<Eigen::VectorXf> u0(displacements.data()->data(), dof);
 
-	Eigen::MatrixXf phi = eigenModes(Eigen::all, Eigen::seqN(0,d)).transpose();  // This should be d x 3n
-
-	B.segment(row, d) = phi * M * p0;
+	B.segment(row, d) = phiT * M * u0 + c;
 	//if (k0.hasVel)
 	//	B.segment(row + d, d) = Eigen::VectorXf::Zero(d);
 
@@ -425,17 +522,22 @@ void Wiggly::compute() {
 	// In-between constraints
 	for (int i = 1; i < keyframes.size() - 1; i++)
 	{
-		const Keyframe& ki = keyframes[i];
+		Keyframe& ki = keyframes[i];
+		ki.t = getNormalizedTime(ki.frame);
+
 		for (int j = 0; j < d; j++)
 		{
-			float lambda = eigenValues(i);
-			float delta = 0.5f * (parms.alpha + parms.beta * lambda);
+			float lambda = getLambda(j);
+			float delta = getDelta(lambda);
+
+			// std::cout << "Dim: " << j << " Lambda: " << lambda << " Delta: " << delta << std::endl;
 
 			for (int l = 0; l < 4; l++)
 			{
-				float bj = b(ki.frame, delta, lambda, j);
-				float bdj = bDot(ki.frame, delta, lambda, j);
-				float bddj = bDDot(ki.frame, delta, lambda, j);
+				float bj = b(ki.t, delta, lambda, l);
+				float bdj = bDot(ki.t, delta, lambda, l);
+				float bddj = bDDot(ki.t, delta, lambda, l);
+				// std::cout << " Basis" << l << " " << bj << " " << bdj << " " << bddj << std::endl;
 
 				int col1 = getCoeffIdx(i - 1, j, l);
 				int col2 = getCoeffIdx(i, j, l);
@@ -447,7 +549,7 @@ void Wiggly::compute() {
 				// C1 Continuity
 				A(row + d + j, col1) = bdj;
 				A(row + d + j, col2) = -bdj;
-
+				
 				// C2 Continuity
 				A(row + 2*d + j, col1) = bddj;
 				A(row + 2*d + j, col2) = -bddj;
@@ -455,61 +557,120 @@ void Wiggly::compute() {
 				// TODO: Handle velocity case
 			}
 		}
+
+		row += 3 * d;
 	}
 
-	row += 3*d;
-
 	// Boundary condition at t1
-	const Keyframe& km = keyframes.back();
+	Keyframe& km = keyframes.back();
+	km.t = getNormalizedTime(km.frame);
+
 	for (int i = 0; i < d; i++)
 	{
-		float lambda = eigenValues(i);
-		float delta = 0.5f * (parms.alpha + parms.beta * lambda);
+		float lambda = getLambda(i);
+		float delta = getDelta(lambda);
+
 		for (int j = 0; j < 4; j++)
 		{
-			int col = getCoeffIdx(keyframes.size() - 1, i, j);
-			A(row + i, col) = b(km.frame, delta, lambda, j);
+			int col = getCoeffIdx(keyframes.size() - 2, i, j);
+			A(row + i, col) = b(km.t, delta, lambda, j);
 			if (km.hasVel)
-				A(row + d + i, col) = bDot(km.frame, delta, lambda, j);
+				A(row + d + i, col) = bDot(km.t, delta, lambda, j);
 		}
 	}
 
-	km.detail->getPos3AsArray(km.detail->getPointRange(), positions);
-	Eigen::Map<Eigen::VectorXf> pm(positions.data()->data(), dof);
+	u_attrib = km.detail->findFloatTuple(GA_ATTRIB_POINT, "u", 3);
+	km.detail->getAttributeAsArray<UT_Vector3F>(u_attrib, km.detail->getPointRange(), displacements);
+	Eigen::Map<Eigen::VectorXf> um(displacements.data()->data(), dof);
 
-	B.segment(row, d) = phi * M * pm;
+	B.segment(row, d) = phiT * M * um + c;
 	//if (km.hasVel)
 	//	B.segment(row+d, d) = Eigen::VectorXf::Zero(d);
+
+	std::cout << "-----------A------------" << std::endl;
+	std::cout << A << std::endl;
+	std::cout << "-----------b------------" << std::endl;
+	std::cout << B << std::endl;
 
 	if (progress.wasInterrupted())
 		return;
 
+	int subspaceDim = numCoeffs - numConditions;
+
+	if (subspaceDim == 0)
+	{
+		// Can be solved exactly
+		coefficients = A.colPivHouseholderQr().solve(B);
+		// std::cout << coefficients << std::endl;
+		return;
+	}
+
 	// NOTE: BDCSVD preferred for larger matrix
-	Eigen::BDCSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
-	int subspace_dim = numCoeffs - numConditions;
-	
+	Eigen::BDCSVD<Eigen::MatrixXf> svd = A.bdcSvd(Eigen::ComputeFullU | Eigen::ComputeFullV);
+	Eigen::MatrixXf U = svd.matrixV()(Eigen::all, Eigen::seq(numCoeffs - subspaceDim, Eigen::last));
+
 	std::cout << svd.info() << std::endl;
 
-	// Eigen::MatrixXf U = svd.matrixV()(Eigen::all, Eigen::seq(numCoeffs - subspace_dim, Eigen::last));
+	Eigen::VectorXf w0 = svd.solve(B);
 
-	// Eigen::VectorXf w0 = svd.solve(B);
+	std::cout << w0 << std::endl;
 
-	// std::cout << w0 << std::endl;
-
-	//if (progress.wasInterrupted())
-	//	return;
-
-	//// NOTE: Is passing in *this the best way to approach functor?
-	//WigglyFunctor functor(*this, U, w0);
+	// NOTE: Is passing in *this the best way to approach functor?
+	//WigglyFunctor functor(*this, U, w0, subspaceDim);
 	//Eigen::NumericalDiff<WigglyFunctor> numDiff(functor);
 	//Eigen::LevenbergMarquardt<Eigen::NumericalDiff<WigglyFunctor>, float> lm(numDiff);
 
 	//// Initial guess
-	//Eigen::VectorXf xmin = Eigen::VectorXf::Zero(numCoeffs);
+	//Eigen::VectorXf xmin = Eigen::VectorXf::Zero(subspaceDim);
 
-	//lm.minimize(xmin);
+	//int info = lm.minimize(xmin);
+	//std::cout << info << std::endl;
 
-	//coefficients = xmin;  // TODO: Can we directly minimize on the member variable?
+	//const gsl_multimin_fdfminimizer_type* T;
+	//gsl_multimin_fdfminimizer* s;
+
+	//gsl_vector* x;
+	//gsl_vector_set_all(x, 0.0);
+
+	//gsl_multimin_function_fdf objfunc;
+
+	//gsl_objective_data data;
+	//data.U = U;
+	//data.w0 = w0;
+
+	//objfunc.n = subspaceDim;
+	//objfunc.f = gls_objective_f;
+	//objfunc.params = &data;
+
+	//x = gsl_vector_alloc(subspaceDim);
+
+	//T = gsl_multimin_fdfminimizer_vector_bfgs;
+	//s = gsl_multimin_fdfminimizer_alloc(T, 2);
+
+	//gsl_multimin_fdfminimizer_set(s, &objfunc, x, /*step size*/ 0.01, 1e-4);
+
+	column_vector z;
+	z.set_size(subspaceDim);
+	for (int i = 0; i < z.size(); i++)
+		z(i) = 0.0;
+
+	//std::cout << z << std::endl;
+
+	ObjFunctor objective(*this, U, w0, subspaceDim);
+
+	dlib::find_min_using_approximate_derivatives(
+		dlib::bfgs_search_strategy(),
+		dlib::objective_delta_stop_strategy(1e-7).be_verbose(),
+		objective, z, -1);
+
+	//std::cout << z << std::endl;
+
+	//// Convert dlib to Eigen
+	Eigen::VectorXf z_opt = Eigen::VectorXf::Zero(subspaceDim);
+	for (int i = 0; i < subspaceDim; i++)
+		z_opt(i) = z(i);
+
+	coefficients = w0 + U*z_opt;  // TODO: Can we directly minimize on the member variable?
 }
 
 /*
@@ -534,7 +695,7 @@ void Wiggly::preCompute() {
 	*/
 	M = Eigen::MatrixXf::Zero(dof, dof);
 
-	const float EA = 1000;
+	const float EA = parms.young;
 
 	std::unordered_set<int> visitedEdges;
 
@@ -646,8 +807,12 @@ void Wiggly::preCompute() {
 		}
 	}
 
-	// std::cout << K << std::endl;
-	// std::cout << M << std::endl;
+	Eigen::IOFormat CommaInitFmt(
+		Eigen::StreamPrecision, 
+		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
+
+	std::cout << K.format(CommaInitFmt) << std::endl;
+	std::cout << M.format(CommaInitFmt) << std::endl;
 
 	// printf("Determinant: %f\n", K.determinant());
 
@@ -656,9 +821,14 @@ void Wiggly::preCompute() {
 		return;
 
 	// Find eigenvalues and eigenvectors
+	// NOTE: Using self adjoint because both K and M are symmetric
 	Eigen::GeneralizedEigenSolver<Eigen::MatrixXf> ges;
 	ges.compute(K, M);
 
 	eigenValues = ges.eigenvalues().real();
 	eigenModes = ges.eigenvectors().real();
+
+	std::cout << "eigen check" << std::endl;
+	std::cout << eigenModes << std::endl << std::endl;
+	// std::cout << eigenModes.transpose() * M * eigenModes << std::endl;
 }

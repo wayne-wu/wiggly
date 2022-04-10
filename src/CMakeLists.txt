@@ -27,10 +27,13 @@ add_library( ${library_name} SHARED
     Wiggly.C
 )
 
+add_subdirectory(C:/dev/dlib-19.23 dlib_build)
+
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
 target_link_libraries( ${library_name} Houdini )
 target_link_libraries( ${library_name} GSL::gsl GSL::gslcblas)
+target_link_libraries( ${library_name} dlib::dlib )
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE

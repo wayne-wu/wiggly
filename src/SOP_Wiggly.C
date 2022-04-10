@@ -72,7 +72,7 @@ static const char* theDsFile = R"THEDSFILE(
             name    "stiffnessmul"      // Internal parameter name
             label   "Stiffness Multiplier" // Descriptive parameter name for user interface
             type    float
-            default { "1.0" }     // Default for this parameter on new nodes
+            default { "0.01" }     // Default for this parameter on new nodes
             range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
                                 // The UI slider goes up to 50, but the value can go higher.
             export  all         // This makes the parameter show up in the toolbox
@@ -83,12 +83,31 @@ static const char* theDsFile = R"THEDSFILE(
             label   "Number of Modes" // Descriptive parameter name for user interface
             type    integer
             default { "20" }     // Default for this parameter on new nodes
-            range   { 10! 50 }   // The value is prevented from going below 2 at all.
+            range   { 10 50 }   // The value is prevented from going below 2 at all.
                                 // The UI slider goes up to 50, but the value can go higher.
             export  all         // This makes the parameter show up in the toolbox
                                 // above the viewport when it's in the node's state.
        }
-
+       parm {
+            name    "young"      // Internal parameter name
+            label   "Young Modulus" // Descriptive parameter name for user interface
+            type    float
+            default { "100.0" }     // Default for this parameter on new nodes
+            range   { 1! 1000.0 }   // The value is prevented from going below 2 at all.
+                                // The UI slider goes up to 50, but the value can go higher.
+            export  all         // This makes the parameter show up in the toolbox
+                                // above the viewport when it's in the node's state.
+       }
+       parm {
+            name    "gconstant"      // Internal parameter name
+            label   "G Constant"     // Descriptive parameter name for user interface
+            type    float
+            default { "1.0" }     // Default for this parameter on new nodes
+            range   { 0.0 100.0 }   // The value is prevented from going below 2 at all.
+                                // The UI slider goes up to 50, but the value can go higher.
+            export  all         // This makes the parameter show up in the toolbox
+                                // above the viewport when it's in the node's state.
+       }
 }
 )THEDSFILE";
 
@@ -174,6 +193,8 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			parms.alpha = sopparms.getMassmul();
 			parms.beta = sopparms.getStiffnessmul();
 			parms.d = sopparms.getModesnum();
+			parms.g = sopparms.getGconstant();
+			parms.young = sopparms.getYoung();
 
 			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
 
