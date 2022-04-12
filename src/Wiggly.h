@@ -14,13 +14,14 @@
 // On one hand, it would save memory to not have to duplicate data,
 // but then you can't decouple the system anymore
 
-#define EPS 1e-10
-
 
 namespace HDK_Wiggly {
 
+	typedef double scalar;  // <------- Set precision here
+	typedef Eigen::VectorXd VecX;
+	typedef Eigen::MatrixXd MatX;
+
 	typedef std::pair<int, int> Element;
-	typedef Eigen::VectorXf VecX;
 
 	struct Keyframe
 	{
@@ -41,21 +42,23 @@ namespace HDK_Wiggly {
 	*/
 	struct WigglyParms
 	{
-		float alpha;
-		float beta;
-		float g = 1;
+		scalar alpha;
+		scalar beta;
+		scalar g = 1;
 		int d = 20;
-		float cA = 1.0;
-		float cB = 1.0;
-		float p = 1000;
-		float young;
+		scalar cA = 1.0;
+		scalar cB = 1.0;
+		scalar p = 1000;
+		scalar young;
+		scalar eps = 1e-6;
+		scalar poisson;
 	};
 
 	class Wiggly
 	{
 
 	public:
-		Wiggly(const GU_Detail* mgdp, const WigglyParms& sopparms) 
+		Wiggly(const GU_Detail* mgdp, const WigglyParms& sopparms)
 			: mesh(mgdp), parms(sopparms) {}
 		~Wiggly() {}
 
@@ -63,62 +66,61 @@ namespace HDK_Wiggly {
 		void preCompute();
 
 		VecX u(const float t);
-		float totalEnergy(const VecX& c);
-		float integrand(const float t, const int d, const float delta, const float lambda, const VecX& coeffs);
+		scalar totalEnergy(const VecX& c);
+		scalar integrand(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 		int getNumPoints() { return mesh->getNumPoints(); }
 		Keyframes& getKeyframes() { return keyframes; }
 
 	protected:
 
 		// Basis Functions
-		float b(const float t, const float delta, const float lambda, const int i);
-		float bDot(const float t, const float delta, const float lambda, const int i);
-		float bDDot(const float t, const float delta, const float lambda, const int i);
+		scalar b(const float t, const scalar delta, const scalar lambda, const int i);
+		scalar bDot(const float t, const scalar delta, const scalar lambda, const int i);
+		scalar bDDot(const float t, const scalar delta, const scalar lambda, const int i);
 
 		// Displacement Functions
 		VecX u(const float t, const VecX& coeffs);
 		VecX uDot(const float t, const VecX& coeffs);
-		//VecX& uDDot(const float t, const VecX& coeffs);
 
 		// Wiggly Splines
-		float wiggly(const float t, const int d, const float delta, const float lambda, const VecX& coeffs);
-		float wigglyDot(const float t, const int d, const float delta, const float lambda, const VecX& coeffs);
-		float wigglyDDot(const float t, const int d, const float delta, const float lambda, const VecX& coeffs);
+		scalar wiggly(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
+		scalar wigglyDot(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
+		scalar wigglyDDot(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 
 		// Energy Functions
-		float keyframeEnergy(const VecX& coeffs);
-		float dynamicsEnergy(const VecX& coeffs);
-		float integralEnergy(const int d, const float delta, const float lambda, const VecX& coeffs);
+		scalar keyframeEnergy(const VecX& coeffs);
+		scalar dynamicsEnergy(const VecX& coeffs);
+		scalar integralEnergy(const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 
 		int getSegmentIdx(const float t);
 		float getNormalizedTime(const float frame);
 
 		/* Get the c constant */
-		inline float getC(const float& lambda) { return abs(lambda) > EPS ? parms.g / abs(lambda) : 0.0; }
+		inline scalar getC(const scalar& lambda) { return abs(lambda) > parms.eps ? parms.g / abs(lambda) : 0.0; }
 		/* Get the damping constant */
-		inline float getDelta(const float& lambda) { return 0.5f * (parms.alpha + parms.beta * lambda); }
+		inline scalar getDelta(const scalar& lambda) { return 0.5 * (parms.alpha + parms.beta * lambda); }
 		/* Get the lambda constant */
-		inline float getLambda(const int& i) { return eigenValues(i); }
-		
+		inline scalar getLambda(const int& i) { return eigenValues(i); }
+
 
 		int getNumCoeffs() { return 4 * (keyframes.size() - 1); }
 		/* Get the total number of DOF (i.e. x, y, z for every node)*/
 		int getDof() { return 3 * getNumPoints(); }
 		/* Get the total number of coefficients across all wiggly splines */
 		int getTotalNumCoeffs() { return 4 * (keyframes.size() - 1) * parms.d; }
-		
+
 		/* Get the flattened idx of a coefficient */
-		inline int getCoeffIdx(const float k, const float d, const float l) { return k * 4 * parms.d + 4 * d + l; }
+		inline int getCoeffIdx(const int k, const int d, const int l) { return k * 4 * parms.d + 4 * d + l; }
 
 		const GU_Detail* mesh;
 		Keyframes keyframes;
 		const WigglyParms parms;
 
-		Eigen::MatrixXf M;
-		Eigen::MatrixXf K;
+		MatX M;
+		MatX K;
 
-		Eigen::VectorXf eigenValues;   // getDof() x 1
-		Eigen::MatrixXf eigenModes;    // getDof() x getDof()
-		Eigen::VectorXf coefficients;  // getDof() x 1
+		VecX eigenValues;   // getDof() x 1
+		MatX eigenModes;    // getDof() x getDof()
+		VecX coefficients;  // getDof() x 1
 	};
 }

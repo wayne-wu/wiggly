@@ -72,7 +72,7 @@ static const char* theDsFile = R"THEDSFILE(
             name    "stiffnessmul"      // Internal parameter name
             label   "Stiffness Multiplier" // Descriptive parameter name for user interface
             type    float
-            default { "0.01" }     // Default for this parameter on new nodes
+            default { "0.001" }     // Default for this parameter on new nodes
             range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
                                 // The UI slider goes up to 50, but the value can go higher.
             export  all         // This makes the parameter show up in the toolbox
@@ -99,11 +99,31 @@ static const char* theDsFile = R"THEDSFILE(
                                 // above the viewport when it's in the node's state.
        }
        parm {
+            name    "poisson"      // Internal parameter name
+            label   "Poisson" // Descriptive parameter name for user interface
+            type    float
+            default { "0.3" }     // Default for this parameter on new nodes
+            range   { 0! 1! }   // The value is prevented from going below 2 at all.
+                                // The UI slider goes up to 50, but the value can go higher.
+            export  all         // This makes the parameter show up in the toolbox
+                                // above the viewport when it's in the node's state.
+       }
+       parm {
             name    "gconstant"      // Internal parameter name
             label   "G Constant"     // Descriptive parameter name for user interface
             type    float
-            default { "1.0" }     // Default for this parameter on new nodes
+            default { "0.0" }     // Default for this parameter on new nodes
             range   { 0.0 100.0 }   // The value is prevented from going below 2 at all.
+                                // The UI slider goes up to 50, but the value can go higher.
+            export  all         // This makes the parameter show up in the toolbox
+                                // above the viewport when it's in the node's state.
+       }
+       parm {
+            name    "epsilon"      // Internal parameter name
+            label   "Epsilon"     // Descriptive parameter name for user interface
+            type    float
+            default { "1e-7" }     // Default for this parameter on new nodes
+            range   { 1e-12 1e-3 }   // The value is prevented from going below 2 at all.
                                 // The UI slider goes up to 50, but the value can go higher.
             export  all         // This makes the parameter show up in the toolbox
                                 // above the viewport when it's in the node's state.
@@ -192,9 +212,12 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			WigglyParms parms;
 			parms.alpha = sopparms.getMassmul();
 			parms.beta = sopparms.getStiffnessmul();
-			parms.d = sopparms.getModesnum();
+			parms.d = std::min(sopparms.getModesnum(), detail->getNumPoints()*3);
 			parms.g = sopparms.getGconstant();
 			parms.young = sopparms.getYoung();
+			parms.eps = sopparms.getEpsilon();
+			parms.p = sopparms.getMassdensity();
+			parms.poisson = sopparms.getPoisson();
 
 			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
 
@@ -257,7 +280,7 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 
 		// Loop through all points and modify the value
 
-		Eigen::VectorXf uPos = sopcache->wigglyObj->u(f);
+		VecX uPos = sopcache->wigglyObj->u(f);
 
 		GA_Offset ptoff;
 		GA_FOR_ALL_PTOFF(detail, ptoff)
