@@ -11,7 +11,7 @@
 
 #include <iostream>
 
-
+#define DEBUG 0
 #define CANTOR(a, b) (a + b) * (a + b + 1) / 2 + a
 
 
@@ -236,7 +236,7 @@ scalar Wiggly::bDot(const float t, const scalar delta, const scalar lambda, int 
 	// delta == 0 && lambda > 0
 	if (abs(delta) < parms.eps && lambda > parms.eps)
 	{
-		float n = sqrt(abs(lambda));
+		scalar n = sqrt(abs(lambda));
 		switch (i) {
 		case 0:
 			return -n * sin(n * t);
@@ -251,12 +251,12 @@ scalar Wiggly::bDot(const float t, const scalar delta, const scalar lambda, int 
 		}
 	}
 
-	float tmp = delta * delta - lambda;
+	scalar tmp = delta * delta - lambda;
 
 	// delta == 0 && lambda < 0 or n == 0 && lambda > 0
 	if ((abs(delta) < parms.eps && lambda < -parms.eps) || sqrt(abs(tmp)) < parms.eps && lambda > parms.eps)
 	{
-		float e = sqrt(abs(lambda));
+		scalar e = sqrt(abs(lambda));
 		switch (i) {
 		case 0:
 			return -e*exp(-e * t);
@@ -273,12 +273,12 @@ scalar Wiggly::bDot(const float t, const scalar delta, const scalar lambda, int 
 
 	if (tmp > parms.eps)
 	{
-		float expr = sign1 * delta + sign2 * sqrt(tmp);
+		scalar expr = sign1 * delta + sign2 * sqrt(tmp);
 		return exp(t * expr) * expr;
 	}
 	else
 	{
-		float expr = sqrt(-tmp);
+		scalar expr = sqrt(-tmp);
 		if (sign2 == 1)
 			return exp(sign1 * t * delta) * ((sign1 * delta * cos(t * expr)) - (expr * sin(t * expr)));
 		else
@@ -315,7 +315,7 @@ scalar Wiggly::bDDot(const float t, const scalar delta, const scalar lambda, int
 
 	if (abs(delta) < parms.eps && lambda > parms.eps)
 	{
-		float n = sqrt(abs(lambda));
+		scalar n = sqrt(abs(lambda));
 		switch (i) {
 		case 0:
 			return -n * n * cos(n * t);
@@ -330,12 +330,12 @@ scalar Wiggly::bDDot(const float t, const scalar delta, const scalar lambda, int
 		}
 	}
 
-	float tmp = delta * delta - lambda;
+	scalar tmp = delta * delta - lambda;
 
 	// delta == 0 && lambda < 0 or n == 0 && lambda > 0
 	if ((abs(delta) < parms.eps && lambda < -parms.eps) || sqrt(abs(tmp)) < parms.eps && lambda > parms.eps)
 	{
-		float e = sqrt(abs(lambda));
+		scalar e = sqrt(abs(lambda));
 		switch (i) {
 		case 0:
 			return e*e * exp(-e * t);
@@ -352,13 +352,13 @@ scalar Wiggly::bDDot(const float t, const scalar delta, const scalar lambda, int
 
 	if (tmp > parms.eps)
 	{
-		float expr = sign1 * delta + sign2 * sqrt(tmp);
+		scalar expr = sign1 * delta + sign2 * sqrt(tmp);
 		return exp(t * expr) * expr * expr;
 	}
 	else
 	{
-		float expr = sqrt(-tmp);
-		float dsqExpr = 2 * delta * delta - lambda;
+		scalar expr = sqrt(-tmp);
+		scalar dsqExpr = 2 * delta * delta - lambda;
 		if (sign2 == 1)
 			return exp(sign1 * t) * ((dsqExpr * cos(t * expr)) + (2 * delta * expr * (-sign1) * sin(t * expr)));
 		else
@@ -457,7 +457,7 @@ scalar Wiggly::totalEnergy(const VecX& c)
 	scalar d = dynamicsEnergy(c);
 	scalar k = keyframeEnergy(c);
 	// std::cout << "d: " << d << "   k: " << k << std::endl;
-	scalar e = k + d*0.01;
+	scalar e = k + d*0.001;
 	return e;
 }
 
@@ -466,16 +466,15 @@ Compute the energy based on constraints
 */
 scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 {
-	float total = 0;
+	scalar total = 0;
 	for (Keyframe& k : keyframes)
 	{
 		VecX uPos = u(k.t, coeffs);
 		VecX uVel = uDot(k.t, coeffs);
 
-		GA_ROHandleV3 u_h(k.detail, GA_ATTRIB_POINT, "u");
-		GA_ROHandleV3 v_h(k.detail, GA_ATTRIB_POINT, "v");
+		GA_ROHandleV3D v_h(k.detail, GA_ATTRIB_POINT, "v");
 
-		float posDiff = 0, velDiff = 0;
+		scalar posDiff = 0, velDiff = 0;
 		for (int j = 0; j < k.points.size(); ++j)
 		{
 			int ptIdx = k.points[j];
@@ -483,18 +482,12 @@ scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 				continue;
 
 			if (k.hasPos) 
-			{
-				UT_Vector3 ak = u_h.get(k.detail->pointOffset(ptIdx));
-				UT_Vector3 uk = UT_Vector3(uPos(3 * ptIdx), uPos(3 * ptIdx + 1), uPos(3 * ptIdx + 2));
-				posDiff += ak.distance2(uk);
-			}
+				posDiff += k.u[ptIdx].distance2(
+					UT_Vector3D(uPos(3 * ptIdx), uPos(3 * ptIdx + 1), uPos(3 * ptIdx + 2)));
 
 			if (k.hasVel)
-			{
-				UT_Vector3 bk = v_h.get(k.detail->pointOffset(ptIdx));
-				UT_Vector3 vk = UT_Vector3(uVel(3 * ptIdx), uVel(3 * ptIdx + 1), uVel(3 * ptIdx + 2));
-				velDiff += bk.distance2(vk);
-			}
+				velDiff += v_h.get(k.detail->pointOffset(ptIdx)).distance2(
+					UT_Vector3D(uVel(3 * ptIdx), uVel(3 * ptIdx + 1), uVel(3 * ptIdx + 2)));
 		}
 		total += posDiff * parms.cA;
 		total += velDiff * parms.cB;
@@ -574,10 +567,7 @@ void Wiggly::compute() {
 	MatX A = MatX::Zero(numConditions, numCoeffs);
 	VecX B = VecX::Zero(numConditions);
 	VecX c = VecX::Zero(d);
-	MatX phi = eigenModes(Eigen::all, Eigen::seqN(0,d));  // This should be d x 3n
-
-	//std::cout << "------eigen check--------" << std::endl << phiT * M * phiT.transpose() << std::endl;
-	//std::cout << "------eigen check--------" << std::endl << phiT.transpose() * phiT * M << std::endl;
+	MatX phiTM = eigenModes(Eigen::all, Eigen::seqN(0,d)).transpose()*M;  // This should be d x 3n
 
 	int row = 0; // The row correlates to the number of linear conditions
 
@@ -599,13 +589,9 @@ void Wiggly::compute() {
 		}
 	}
 
-	UT_Array<UT_Vector3D> displacements;
-	const GA_Attribute* u_attrib = k0.detail->findFloatTuple(GA_ATTRIB_POINT, "u", 3);
-	// TODO: Might need to account for incorrect point order?
-	k0.detail->getAttributeAsArray<UT_Vector3D>(u_attrib, k0.detail->getPointRange(), displacements);
-	Eigen::Map<VecX> u0(displacements.data()->data(), dof);
+	Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
 
-	B.segment(row, d) = phi.transpose() * M * u0 + c;
+	B.segment(row, d) = phiTM * u0 + c;
 	//if (k0.hasVel)
 	//	B.segment(row + d, d) = Eigen::VectorXf::Zero(d);
 
@@ -668,21 +654,22 @@ void Wiggly::compute() {
 		}
 	}
 
-	u_attrib = km.detail->findFloatTuple(GA_ATTRIB_POINT, "u", 3);
-	km.detail->getAttributeAsArray<UT_Vector3D>(u_attrib, km.detail->getPointRange(), displacements);
-	Eigen::Map<VecX> um(displacements.data()->data(), dof);
+	Eigen::Map<VecX> um(km.u.data()->data(), dof);
 
-	B.segment(row, d) = phi.transpose() * M * um + c;
+	B.segment(row, d) = phiTM * um + c;
 	//if (km.hasVel)
 	//	B.segment(row+d, d) = Eigen::VectorXf::Zero(d);
 
-	//std::cout << "-----------A------------" << std::endl;
-	//Eigen::IOFormat CommaInitFmt(
-	//	Eigen::StreamPrecision,
-	//	Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
-	//std::cout << A.format(CommaInitFmt) << std::endl;
-	//std::cout << "-----------b------------" << std::endl;
-	//std::cout << B << std::endl;
+#if DEBUG
+	std::cout << "===========A============" << std::endl;
+	Eigen::IOFormat CommaInitFmt(
+		Eigen::StreamPrecision,
+		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
+	std::cout << A.format(CommaInitFmt) << std::endl;
+	std::cout << "Det(A) = " << A.determinant() << std::endl;
+	std::cout << "===========b============" << std::endl;
+	std::cout << B << std::endl;
+#endif
 
 	if (progress.wasInterrupted())
 		return;
@@ -692,7 +679,6 @@ void Wiggly::compute() {
 	if (subspaceDim == 0)
 	{
 		// Can be solved exactly
-		std::cout << "Det(A) = " << A.determinant() << std::endl;
 		coefficients = A.colPivHouseholderQr().solve(B);
 		return;
 	}
@@ -703,6 +689,9 @@ void Wiggly::compute() {
 
 	VecX w0 = svd.solve(B);
 
+	UT_AutoInterrupt progress2("Running Optimization");
+	if (progress2.wasInterrupted())
+		return;
 
 	// TODO: What should the starting value be?
 	column_vector z;
@@ -710,16 +699,12 @@ void Wiggly::compute() {
 	for (int i = 0; i < z.size(); i++)
 		z(i) = 1.0;
 
-	//std::cout << z << std::endl;
-
 	ObjFunctor objective(*this, U, w0, subspaceDim);
 
 	dlib::find_min_using_approximate_derivatives(
 		dlib::bfgs_search_strategy(),
-		dlib::objective_delta_stop_strategy(parms.eps).be_verbose(),
+		dlib::objective_delta_stop_strategy(parms.eps),
 		objective, z, -1);
-
-	//std::cout << z << std::endl;
 
 	//// Convert dlib to Eigen
 	VecX z_opt = VecX::Zero(subspaceDim);
@@ -820,12 +805,13 @@ void Wiggly::preCompute() {
 		M(subrows, subrows) += subM;
 	}
 
+#if DEBUG
 	Eigen::IOFormat CommaInitFmt(
-		Eigen::StreamPrecision, 
+		Eigen::StreamPrecision,
 		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
-
 	std::cout << K << std::endl;
 	std::cout << M << std::endl;
+#endif
 
 	UT_AutoInterrupt progress2("Finding eigenvalues and eigen vectors.");
 	if (progress2.wasInterrupted())

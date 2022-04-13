@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include <UT/UT_Vector3.h>
+#include <UT/UT_Array.h>
 #include <GU/GU_Detail.h>
 
 #include "Eigen/Dense"
@@ -28,6 +29,7 @@ namespace HDK_Wiggly {
 		float t;
 		float frame;
 		std::vector<GA_Index> points;
+		std::vector<UT_Vector3D> u;
 		bool hasPos;
 		bool hasVel;
 		const GU_Detail* detail;
@@ -70,6 +72,7 @@ namespace HDK_Wiggly {
 		scalar integrand(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 		int getNumPoints() { return mesh->getNumPoints(); }
 		Keyframes& getKeyframes() { return keyframes; }
+		WigglyParms& getParms() { return parms; }
 
 	protected:
 
@@ -114,7 +117,7 @@ namespace HDK_Wiggly {
 
 		const GU_Detail* mesh;
 		Keyframes keyframes;
-		const WigglyParms parms;
+		WigglyParms parms;
 
 		MatX M;
 		MatX K;

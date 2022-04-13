@@ -48,86 +48,95 @@ newSopOperator(OP_OperatorTable *table)
 static const char* theDsFile = R"THEDSFILE(
 {
         name        parameters
-        parm {
-            name    "massdensity"      // Internal parameter name
-            label   "Mass Density" // Descriptive parameter name for user interface
-            type    float
-            default { "1000.0" }     // Default for this parameter on new nodes
-            range   { 0! 5000.0 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "massmul"      // Internal parameter name
-            label   "Mass Multiplier" // Descriptive parameter name for user interface
-            type    float
-            default { "1.0" }     // Default for this parameter on new nodes
-            range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "stiffnessmul"      // Internal parameter name
-            label   "Stiffness Multiplier" // Descriptive parameter name for user interface
-            type    float
-            default { "0.001" }     // Default for this parameter on new nodes
-            range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "modesnum"      // Internal parameter name
-            label   "Number of Modes" // Descriptive parameter name for user interface
-            type    integer
-            default { "20" }     // Default for this parameter on new nodes
-            range   { 10 50 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "young"      // Internal parameter name
-            label   "Young Modulus" // Descriptive parameter name for user interface
-            type    float
-            default { "100.0" }     // Default for this parameter on new nodes
-            range   { 1! 1000.0 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "poisson"      // Internal parameter name
-            label   "Poisson" // Descriptive parameter name for user interface
-            type    float
-            default { "0.3" }     // Default for this parameter on new nodes
-            range   { 0! 1! }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "gconstant"      // Internal parameter name
-            label   "G Constant"     // Descriptive parameter name for user interface
-            type    float
-            default { "0.0" }     // Default for this parameter on new nodes
-            range   { 0.0 100.0 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
-       parm {
-            name    "epsilon"      // Internal parameter name
-            label   "Epsilon"     // Descriptive parameter name for user interface
-            type    float
-            default { "1e-7" }     // Default for this parameter on new nodes
-            range   { 1e-12 1e-3 }   // The value is prevented from going below 2 at all.
-                                // The UI slider goes up to 50, but the value can go higher.
-            export  all         // This makes the parameter show up in the toolbox
-                                // above the viewport when it's in the node's state.
-       }
+				groupsimple {
+						name		"properties"
+						label		"Object Properties"
+						parm {
+								name    "massdensity"      // Internal parameter name
+								label   "Mass Density" // Descriptive parameter name for user interface
+								type    float
+								default { "1000.0" }     // Default for this parameter on new nodes
+								range   { 0! 5000.0 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+					  }
+						parm {
+								name    "young"      // Internal parameter name
+								label   "Young Modulus" // Descriptive parameter name for user interface
+								type    float
+								default { "100.0" }     // Default for this parameter on new nodes
+								range   { 1! 1000.0 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+						parm {
+								name    "poisson"      // Internal parameter name
+								label   "Poisson Ratio" // Descriptive parameter name for user interface
+								type    float
+								default { "0.3" }     // Default for this parameter on new nodes
+								range   { 0! 1! }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+				}
+				groupsimple {
+						name		"compute"
+						label		"Compute Settings"
+						parm {
+								name    "alpha"      // Internal parameter name
+								label   "Mass Damping" // Descriptive parameter name for user interface
+								type    float
+								default { "1.0" }     // Default for this parameter on new nodes
+								range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+						parm {
+								name    "beta"      // Internal parameter name
+								label   "Stiffness Damping" // Descriptive parameter name for user interface
+								type    float
+								default { "0.001" }     // Default for this parameter on new nodes
+								range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+						parm {
+								name    "modesnum"      // Internal parameter name
+								label   "Number of Modes" // Descriptive parameter name for user interface
+								type    integer
+								default { "20" }     // Default for this parameter on new nodes
+								range   { 10 50 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+
+						parm {
+								name    "gconstant"      // Internal parameter name
+								label   "G Constant"     // Descriptive parameter name for user interface
+								type    float
+								default { "0.0" }     // Default for this parameter on new nodes
+								range   { 0.0 100.0 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+						parm {
+								name    "epsilon"      // Internal parameter name
+								label   "Epsilon"     // Descriptive parameter name for user interface
+								type    float
+								default { "1e-7" }     // Default for this parameter on new nodes
+								range   { 1e-12 1e-3 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+				}
 }
 )THEDSFILE";
 
@@ -146,6 +155,12 @@ public:
 
 	exint prevInput1Id;
 	exint prevInput2Id;
+	exint topologyDataId1;
+	exint topologyDataId2;
+	exint primitiveListDataId1;
+	exint primitiveListDataId2;
+	exint metaCacheCount1;
+	exint metaCacheCound2;
 
 	UT_UniquePtr<Wiggly> wigglyObj;
 };
@@ -180,11 +195,10 @@ SOP_Wiggly::cookVerb() const
 void
 SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 {
-		// fpreal		 now = context.getTime();
 		auto&& sopparms = cookparms.parms<SOP_WigglyParms>();
 		auto sopcache = (SOP_WigglyCache*)cookparms.cache();
 		
-		GU_Detail* detail = cookparms.gdh().gdpNC();
+		GU_Detail* detail = cookparms.gdh().gdpNC();    // rest geometry to be modified
 		const GU_Detail* bgdp = cookparms.inputGeo(1);  // constraints
 
 		if (bgdp->getNumPrimitives() < 2)
@@ -193,26 +207,29 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			return;
 		}
 
-		CH_Manager* chman = OPgetDirector()->getChannelManager();
+		bool preComputeNeeded = true;
+		bool computeNeeded = false;
 
-		fpreal f = chman->getSample(cookparms.getCookTime());
+		if (sopcache->wigglyObj)
+			if (sopcache->prevInput1Id == detail->getUniqueId() &&
+				sopcache->primitiveListDataId1 == detail->getPrimitiveList().getDataId() &&
+				sopcache->topologyDataId1 == detail->getTopology().getDataId())
+				preComputeNeeded = false;
 
-		bool recompute = false;
-
-		if (detail->getUniqueId() != sopcache->prevInput1Id)
+		if (preComputeNeeded)
 		{
 			// TODO: Check if the parameter has changed too
 
 			// If the mesh has changed then we need to recompute everything
-			recompute = true;
+			computeNeeded = true;
 
 			// Clear cache data
 			sopcache->wigglyObj.reset();
 
 			WigglyParms parms;
-			parms.alpha = sopparms.getMassmul();
-			parms.beta = sopparms.getStiffnessmul();
-			parms.d = std::min(sopparms.getModesnum(), detail->getNumPoints()*3);
+			parms.alpha = sopparms.getAlpha();
+			parms.beta = sopparms.getBeta();
+			parms.d = std::min(sopparms.getModesnum(), detail->getNumPoints() * 3);
 			parms.g = sopparms.getGconstant();
 			parms.young = sopparms.getYoung();
 			parms.eps = sopparms.getEpsilon();
@@ -220,22 +237,25 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			parms.poisson = sopparms.getPoisson();
 
 			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
-
-			UT_AutoInterrupt interrupt("Pre computing");
-			if (interrupt.wasInterrupted())
-				return;
-
 			sopcache->wigglyObj->preCompute();
 
 			sopcache->prevInput1Id = detail->getUniqueId();
+			sopcache->primitiveListDataId1 = detail->getPrimitiveList().getDataId();
+			sopcache->topologyDataId1 = detail->getTopology().getDataId();
+			sopcache->metaCacheCount1 = detail->getMetaCacheCount();
 		}
+		else if (sopcache->prevInput2Id != bgdp->getUniqueId() ||
+			sopcache->primitiveListDataId2 != bgdp->getPrimitiveList().getDataId() ||
+			sopcache->topologyDataId2 != bgdp->getTopology().getDataId())
+			computeNeeded = true;
 
-		if (recompute || bgdp->getUniqueId() != sopcache->prevInput2Id)
+		if (computeNeeded)
 		{
 			// GET THE KEYFRAMES DATA FROM SECOND INPUT
 			GA_ROHandleI f_h(bgdp, GA_ATTRIB_POINT, "frame");
 
 			Keyframes& keyframes = sopcache->wigglyObj->getKeyframes();
+			keyframes.clear();
 
 			for (GA_Iterator it(bgdp->getPrimitiveRange()); !it.atEnd(); ++it)
 			{
@@ -252,12 +272,18 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 
 				GA_ROHandleI pt_h(packedDetail, GA_ATTRIB_POINT, "original");
 
+				keyframe.u = std::vector<UT_Vector3D>(packedDetail->getNumPoints());
+
 				GA_Offset ptoff;
 				GA_FOR_ALL_PTOFF(packedDetail, ptoff)
 				{
 					// Store all the keyframes
 					int originalPtId = pt_h.get(ptoff);
-					keyframe.points[originalPtId] = packedDetail->pointIndex(ptoff);
+					int packedPtId = packedDetail->pointIndex(ptoff);
+					keyframe.points[originalPtId] = packedPtId;
+
+					// Calculate the displacement
+					keyframe.u[packedPtId] = packedDetail->getPos3(ptoff) - detail->getPos3(detail->pointOffset(originalPtId));
 				}
 
 				keyframe.detail = packedDetail;
@@ -266,19 +292,26 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 				keyframes.push_back(keyframe);
 			}
 
-			// TODO: Validate keyframes
 			std::sort(keyframes.begin(), keyframes.end());
 
-			// Temporary: hard code velocity for now
-			keyframes.front().hasVel = true;
-			keyframes.back().hasVel = true;
+			// Validate keyframes
+			if (!keyframes.front().hasVel || !keyframes.back().hasVel)
+			{
+				cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Start and end keyframes must have velocity.");
+				return;
+			}
 
 			sopcache->wigglyObj->compute();
 
 			sopcache->prevInput2Id = bgdp->getUniqueId();
+			sopcache->primitiveListDataId2 = bgdp->getPrimitiveList().getDataId();
+			sopcache->topologyDataId2 = bgdp->getTopology().getDataId();
+			sopcache->metaCacheCound2 = bgdp->getMetaCacheCount();
 		}
 
 		// Loop through all points and modify the value
+		CH_Manager* chman = OPgetDirector()->getChannelManager();
+		fpreal f = chman->getSample(cookparms.getCookTime());
 
 		VecX uPos = sopcache->wigglyObj->u(f);
 
