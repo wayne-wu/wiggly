@@ -1,5 +1,6 @@
 #include "GU/GU_PrimTetrahedron.h"
 #include "UT/UT_Interrupt.h"
+#include "UT/UT_UniquePtr.h"
 
 #include "Wiggly.h"
 
@@ -12,51 +13,18 @@
 #include <iostream>
 
 #define DEBUG 0
+#define DEBUG_EIGEN 0
 #define CANTOR(a, b) (a + b) * (a + b + 1) / 2 + a
 
 
 using namespace HDK_Wiggly;
 
-/*
-Functor for minimizing the energy function using non-linear optimization.
-*/
-//struct WigglyFunctor
-//{
-//	typedef float scalar;
-//
-//	typedef Eigen::VectorXf InputType;
-//	typedef Eigen::VectorXf ValueType;
-//	typedef Eigen::Matrix<scalar, Eigen::Dynamic, Eigen::Dynamic> JacobianType;
-//
-//	enum {
-//		InputsAtCompileTime = Eigen::Dynamic,
-//		ValuesAtCompileTime = Eigen::Dynamic
-//	};
-//
-//	WigglyFunctor(Wiggly& obj, const Eigen::MatrixXf& U, const Eigen::VectorXf& w0, const int& dim) 
-//		: wiggly(obj), U(U), w0(w0), subspaceDim(subspaceDim) {}
-//
-//	int operator()(const Eigen::VectorXf& z, Eigen::VectorXf& fvec) const
-//	{
-//		//NOTE: The algorithm will square fvec internally. Problematic?
-//		fvec(0) = wiggly.totalEnergy(w0 + U*z);
-//		std::cout << "energy: " << z << std::endl;
-//		return 0;
-//	}
-//
-//	Wiggly& wiggly;
-//	const Eigen::MatrixXf& U;
-//	const Eigen::VectorXf& w0;
-//	const int subspaceDim;
-//
-//
-//	int inputs() const { return subspaceDim; } // inputs is the dimension of x.
-//	int values() const { return 1; } // "values" is the number of f_i and
-//};
-
 
 typedef dlib::matrix<double, 0, 1> column_vector;
 
+/*
+Functor for the energy objective function using dlib minimization
+*/
 struct ObjFunctor
 {
 	ObjFunctor(Wiggly& obj, const MatX& U, const VecX& w0, const int& dim)
@@ -64,13 +32,15 @@ struct ObjFunctor
 
 	double operator()(const column_vector& v) const
 	{
+		if (wiggly.getProgress().wasInterrupted())
+			return 0.0;
+
+		// TODO: Use Eigen::Map
 		VecX z = VecX::Zero(subDim);
 		for (int i = 0; i < subDim; i++)
 			z(i) = v(i);
 
-		scalar e = wiggly.totalEnergy(w0 + U * z);
-
-		return e;
+		return wiggly.totalEnergy(w0 + U * z);
 	}
 
 	Wiggly& wiggly;
@@ -78,38 +48,6 @@ struct ObjFunctor
 	const VecX& w0;
 	const int subDim;
 };
-//
-///*
-//Struct for storing data that can be passed to the gsl integration function
-//*/
-//struct gsl_integrand_data
-//{
-//	Wiggly* w;
-//	float lambda;
-//	float delta;
-//	const VecX* coeffs;
-//};
-//
-//struct gsl_objective_data
-//{
-//	Wiggly* w;
-//	Eigen::MatrixXf U;
-//	Eigen::VectorXf w0;
-//	int subspaceDim;
-//};
-
-/*
-gsl integration function
-*/
-double gsl_integrand(double t, void* params)
-{
-	// gsl_integrand_data* data = (gsl_integrand_data*)params;
-	
-	// return data->w->integrand(t, data->delta, data->lambda, *data->coeffs);
-	return sin(t);
-}
-
-//double gsl_objective(const gsl_vector, )
 
 /*
 Get the current keyframe index given the time
@@ -410,16 +348,8 @@ scalar Wiggly::wigglyDDot(const float t, const int d, const scalar delta, const 
 
 VecX Wiggly::u(const float f)
 {
-
 	float t = getNormalizedTime(f);
 	return u(t, coefficients);
-	 
-	//VecX displacement = VecX::Zero(3 * getNumPoints());
-	//for (int i = 0; i < getNumPoints(); i++)
-	//{
-	//	displacement[3 * i] = sin(t);
-	//}
-	//return displacement;
 }
 
 /*
@@ -457,8 +387,7 @@ scalar Wiggly::totalEnergy(const VecX& c)
 	scalar d = dynamicsEnergy(c);
 	scalar k = keyframeEnergy(c);
 	// std::cout << "d: " << d << "   k: " << k << std::endl;
-	scalar e = k + d*0.001;
-	return e;
+	return k + parms.physical * d;
 }
 
 /*
@@ -516,7 +445,7 @@ scalar Wiggly::integralEnergy(const int d, const scalar delta, const scalar lamb
 	float a = keyframes.front().t;  // this should be 0 after normalizing
 	float b = keyframes.back().t;  // this should be 1 after normalizing
 
-	float stepSize = (b - a) / float(intervals);
+	float stepSize = 1.0 / intervals;
 
 	float t = a;
 	scalar sum = integrand(a, d, delta, lambda, coeffs) + integrand(b, d, delta, lambda, coeffs);
@@ -554,7 +483,9 @@ This should be recomputed when the mesh changes or the keyframes change.
 */
 void Wiggly::compute() {
 
-	UT_AutoInterrupt progress("Computing wiggly spline coefficients");
+	progress = UTmakeUnique<UT_AutoInterrupt>("Assembling condition matrix.");
+	if (progress->wasInterrupted())
+		return;
 
 	int dof = getDof();
 	int d = parms.d;
@@ -568,6 +499,13 @@ void Wiggly::compute() {
 	VecX B = VecX::Zero(numConditions);
 	VecX c = VecX::Zero(d);
 	MatX phiTM = eigenModes(Eigen::all, Eigen::seqN(0,d)).transpose()*M;  // This should be d x 3n
+
+#if DEBUG_EIGEN
+	MatX phi = eigenModes(Eigen::all, Eigen::seqN(0, d));
+	std::cout << "==============Eigen Check===================" << std::endl;
+	std::cout << phi.transpose() * M * phi << std::endl << std::endl;
+	std::cout << phi * phi.transpose() * M << std::endl;
+#endif
 
 	int row = 0; // The row correlates to the number of linear conditions
 
@@ -671,7 +609,7 @@ void Wiggly::compute() {
 	std::cout << B << std::endl;
 #endif
 
-	if (progress.wasInterrupted())
+	if (progress->wasInterrupted())
 		return;
 
 	int subspaceDim = numCoeffs - numConditions;
@@ -689,8 +627,9 @@ void Wiggly::compute() {
 
 	VecX w0 = svd.solve(B);
 
-	UT_AutoInterrupt progress2("Running Optimization");
-	if (progress2.wasInterrupted())
+	progress.reset();
+	progress = UTmakeUnique<UT_AutoInterrupt>("Running Optimization");
+	if (progress->wasInterrupted())
 		return;
 
 	// TODO: What should the starting value be?
@@ -712,6 +651,8 @@ void Wiggly::compute() {
 		z_opt(i) = z(i);
 
 	coefficients = w0 + U * z_opt;  // TODO: Can we directly minimize on the member variable?
+
+	progress.reset();
 }
 
 /*
@@ -720,8 +661,8 @@ as part of the precompute step. This only needs to be recomputed if the mesh cha
 */
 void Wiggly::preCompute() {
 
-	UT_AutoInterrupt progress1("Assembling stiffness and mass matrices.");
-
+  progress = UTmakeUnique<UT_AutoInterrupt>("Assembling stiffness and mass matrices.");
+	
 	int dof = getDof();
 
 	/*
@@ -738,7 +679,7 @@ void Wiggly::preCompute() {
 
 	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
 	{
-		if (progress1.wasInterrupted())
+		if (progress->wasInterrupted())
 			return;
 
 		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
@@ -813,8 +754,8 @@ void Wiggly::preCompute() {
 	std::cout << M << std::endl;
 #endif
 
-	UT_AutoInterrupt progress2("Finding eigenvalues and eigen vectors.");
-	if (progress2.wasInterrupted())
+	progress = UTmakeUnique<UT_AutoInterrupt>("Finding eigenvalues and eigen vectors.");
+	if (progress->wasInterrupted())
 		return;
 
 	// Find eigenvalues and eigenvectors
@@ -823,6 +764,9 @@ void Wiggly::preCompute() {
 	Eigen::GeneralizedSelfAdjointEigenSolver<MatX> ges;
 	ges.compute(K, M);
 
-	eigenValues = ges.eigenvalues().real().reverse().eval();
-	eigenModes = ges.eigenvectors().real().rowwise().reverse().eval();
+	// NOTE: Eigen values should be from smallest to largest
+	eigenValues = ges.eigenvalues().real();
+	eigenModes = ges.eigenvectors().real();
+
+	progress.reset();
 }

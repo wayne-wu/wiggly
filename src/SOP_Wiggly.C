@@ -106,6 +106,16 @@ static const char* theDsFile = R"THEDSFILE(
 																		// above the viewport when it's in the node's state.
 						}
 						parm {
+								name    "physical"      // Internal parameter name
+								label   "Physicalness" // Descriptive parameter name for user interface
+								type    float
+								default { "0.001" }     // Default for this parameter on new nodes
+								range   { 0! 1.0 }   // The value is prevented from going below 2 at all.
+																		// The UI slider goes up to 50, but the value can go higher.
+								export  all         // This makes the parameter show up in the toolbox
+																		// above the viewport when it's in the node's state.
+						}
+						parm {
 								name    "modesnum"      // Internal parameter name
 								label   "Number of Modes" // Descriptive parameter name for user interface
 								type    integer
@@ -235,6 +245,7 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			parms.eps = sopparms.getEpsilon();
 			parms.p = sopparms.getMassdensity();
 			parms.poisson = sopparms.getPoisson();
+			parms.physical = sopparms.getPhysical();
 
 			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
 			sopcache->wigglyObj->preCompute();

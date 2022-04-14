@@ -54,6 +54,7 @@ namespace HDK_Wiggly {
 		scalar young;
 		scalar eps = 1e-6;
 		scalar poisson;
+		scalar physical;
 	};
 
 	class Wiggly
@@ -61,7 +62,7 @@ namespace HDK_Wiggly {
 
 	public:
 		Wiggly(const GU_Detail* mgdp, const WigglyParms& sopparms)
-			: mesh(mgdp), parms(sopparms) {}
+			: mesh(mgdp), parms(sopparms) { }
 		~Wiggly() {}
 
 		void compute();
@@ -73,6 +74,7 @@ namespace HDK_Wiggly {
 		int getNumPoints() { return mesh->getNumPoints(); }
 		Keyframes& getKeyframes() { return keyframes; }
 		WigglyParms& getParms() { return parms; }
+		UT_AutoInterrupt& getProgress() { return *progress; }
 
 	protected:
 
@@ -118,6 +120,8 @@ namespace HDK_Wiggly {
 		const GU_Detail* mesh;
 		Keyframes keyframes;
 		WigglyParms parms;
+
+		UT_UniquePtr<UT_AutoInterrupt> progress;
 
 		MatX M;
 		MatX K;
