@@ -27,22 +27,23 @@
 using namespace HDK_Wiggly;
 
 
-const UT_StringHolder SOP_Wiggly::theSOPTypeName("hdk_wiggly"_sh);
+const UT_StringHolder SOP_Wiggly::theSOPTypeName("wigglysolver"_sh);
 
 void
 newSopOperator(OP_OperatorTable *table)
 {
-    table->addOperator(
-	    new OP_Operator(
-					 SOP_Wiggly::theSOPTypeName,			// Internal name
-			     "Wiggly",			// UI name
-			     SOP_Wiggly::myConstructor,	// How to build the SOP
-			     SOP_Wiggly::buildTemplates(),	// My parameters
-			     2,				// Min # of sources
-			     2,				// Max # of sources
-					 nullptr,
-			     OP_FLAG_GENERATOR)		// Flag it as generator
-	    );
+		OP_Operator* op;
+		op = new OP_Operator(
+			SOP_Wiggly::theSOPTypeName,			// Internal name
+			"Wiggly Solver",			// UI name
+			SOP_Wiggly::myConstructor,	// How to build the SOP
+			SOP_Wiggly::buildTemplates(),	// My parameters
+			2,				// Min # of sources
+			2,				// Max # of sources
+			nullptr,
+			OP_FLAG_GENERATOR);		// Flag it as generator
+		op->setIconName("wigglysolver");
+		table->addOperator(op);
 }
 
 static const char* theDsFile = R"THEDSFILE(

@@ -28,6 +28,7 @@ namespace HDK_Wiggly {
       : SOP_Node(net, name, op) 
     {
       mySopFlags.setManagesDataIDs(true);
+      mySopFlags.setNeedGuide1(true);
     }
     ~SOP_Wiggly() override {}
 
@@ -36,6 +37,16 @@ namespace HDK_Wiggly {
     {
       flags().setTimeDep(true);  //NOTE: Is this the right way to do it?
       return cookMyselfAsVerb(context);
+    }
+
+    OP_ERROR cookMyGuide1(OP_Context& context) override
+    {
+      OP_AutoLockInputs inputs(this);
+      if (inputs.lock(context) >= UT_ERROR_ABORT)
+        return error();
+      myGuide1->clearAndDestroy();
+      myGuide1->copy(*inputGeo(1, context));
+      return error();
     }
 
     const char* inputLabel(unsigned idx) const override

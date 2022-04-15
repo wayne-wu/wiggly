@@ -20,7 +20,7 @@
 using namespace HDK_Wiggly;
 
 
-typedef dlib::matrix<double, 0, 1> column_vector;
+typedef dlib::matrix<scalar, 0, 1> column_vector;
 
 /*
 Functor for the energy objective function using dlib minimization
@@ -738,7 +738,7 @@ void Wiggly::preCompute() {
 		D(3, 3) = D(4, 4) = D(5, 5) = (1 - 2 * v) * 0.5;
 		D *= E / ((1 + v)*(1 - 2*v));
 
-		K(subrows, subrows) += V * B.transpose() * D * B;
+		K(subrows, subrows) += V * (B.transpose() * D * B);
 
 		MatX subM = MatX::Zero(12, 12);
 		subM.diagonal().setConstant(2);
@@ -760,6 +760,7 @@ void Wiggly::preCompute() {
 	std::cout << M << std::endl;
 #endif
 
+	progress.reset();
 	progress = UTmakeUnique<UT_AutoInterrupt>("Finding eigenvalues and eigen vectors.");
 	if (progress->wasInterrupted())
 		return;

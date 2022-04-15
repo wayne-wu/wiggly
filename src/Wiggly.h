@@ -90,10 +90,6 @@ namespace HDK_Wiggly {
 		THREADED_METHOD3(Wiggly, shouldMultithread(), uDot, VecX&, out, const float, t, const VecX&, coeffs);
 		void uDotPartial(VecX& out, const float t, const VecX& coeffs, const UT_JobInfo& info);
 
-		// Displacement Functions
-		// VecX u(const float t, const VecX& coeffs);
-		// VecX uDot(const float t, const VecX& coeffs);
-
 		// Wiggly Splines
 		scalar wiggly(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 		scalar wigglyDot(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
