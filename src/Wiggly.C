@@ -35,10 +35,7 @@ struct ObjFunctor
 		if (wiggly.getProgress().wasInterrupted())
 			return 0.0;
 
-		// TODO: Use Eigen::Map
-		VecX z = VecX::Zero(subDim);
-		for (int i = 0; i < subDim; i++)
-			z(i) = v(i);
+		Eigen::Map<const VecX> z(v.begin(), v.size());
 
 		return wiggly.totalEnergy(w0 + U * z);
 	}
@@ -349,44 +346,50 @@ scalar Wiggly::wigglyDDot(const float t, const int d, const scalar delta, const 
 VecX Wiggly::u(const float f)
 {
 	float t = getNormalizedTime(f);
-	return u(t, coefficients);
-}
-
-/*
-Compute the displacement vector
-*/
-VecX Wiggly::u(const float t, const VecX& coeffs)
-{
 	VecX out = VecX::Zero(getDof());
-	for (int i = 0; i < parms.d; i++)
-	{
-		scalar lambda = getLambda(i);
-		scalar delta = getDelta(lambda);
-		out += wiggly(t, i, delta, lambda, coeffs) * eigenModes.col(i);
-	}
+	u(out, t, coefficients);
 	return out;
 }
 
-/*
-Compute the velocity vector
-*/
-VecX Wiggly::uDot(const float t, const VecX& coeffs)
+void Wiggly::uPartial(VecX& out, const float t, const VecX& coeffs, const UT_JobInfo& info)
 {
-	VecX out = VecX::Zero(getDof());
-	for (int i = 0; i < parms.d; i++)
+	int i, n;
+	VecX outPartial = VecX::Zero(getDof());
+	for (info.divideWork(parms.d, i, n); i < n; i++)
 	{
 		scalar lambda = getLambda(i);
 		scalar delta = getDelta(lambda);
-		out += wigglyDot(t, i, delta, lambda, coeffs) * eigenModes.col(i);
+		outPartial += wiggly(t, i, delta, lambda, coeffs) * eigenModes.col(i);
 	}
-	return out;
+
+	{
+		UT_AutoJobInfoLock a(info);
+		out += outPartial;
+	}
+}
+
+void Wiggly::uDotPartial(VecX& out, const float t, const VecX& coeffs, const UT_JobInfo& info)
+{
+	int i, n;
+	VecX outPartial = VecX::Zero(getDof());
+	for (info.divideWork(parms.d, i, n); i < n; i++)
+	{
+		scalar lambda = getLambda(i);
+		scalar delta = getDelta(lambda);
+		outPartial += wigglyDot(t, i, delta, lambda, coeffs) * eigenModes.col(i);
+	}
+
+	{
+		UT_AutoJobInfoLock a(info);
+		out += outPartial;
+	}
 }
 
 scalar Wiggly::totalEnergy(const VecX& c)
 {
-	scalar d = dynamicsEnergy(c);
+	scalar d = 0;
+	dynamicsEnergy(d, c);
 	scalar k = keyframeEnergy(c);
-	// std::cout << "d: " << d << "   k: " << k << std::endl;
 	return k + parms.physical * d;
 }
 
@@ -398,8 +401,10 @@ scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 	scalar total = 0;
 	for (Keyframe& k : keyframes)
 	{
-		VecX uPos = u(k.t, coeffs);
-		VecX uVel = uDot(k.t, coeffs);
+		VecX uPos = VecX::Zero(getDof());
+		VecX uVel = VecX::Zero(getDof());
+		u(uPos, k.t, coeffs);
+		uDot(uVel, k.t, coeffs);
 
 		GA_ROHandleV3D v_h(k.detail, GA_ATTRIB_POINT, "v");
 
@@ -463,18 +468,21 @@ scalar Wiggly::integralEnergy(const int d, const scalar delta, const scalar lamb
 /*
 Evaluate the energy of the linear dynamics decoupled using wiggly splines
 */
-scalar Wiggly::dynamicsEnergy(const VecX& coeffs)
+void Wiggly::dynamicsEnergyPartial(scalar& total, const VecX& coeffs, const UT_JobInfo& info)
 {
-	scalar total = 0;
-	for (int i = 0; i < parms.d; ++i)
+	scalar totalPartial = 0;
+	int i, n;
+	for (info.divideWork(parms.d, i, n); i < n; i++)
 	{
 		scalar lambda = getLambda(i);
 		scalar delta = getDelta(lambda);
-		scalar e = integralEnergy(i, delta, lambda, coeffs);
-		total += e;
+		totalPartial += integralEnergy(i, delta, lambda, coeffs);
 	}
 
-	return total;
+	{
+		UT_AutoJobInfoLock a(info);
+		total += totalPartial;
+	}
 }
 
 /*
@@ -645,12 +653,10 @@ void Wiggly::compute() {
 		dlib::objective_delta_stop_strategy(parms.eps),
 		objective, z, -1);
 
-	//// Convert dlib to Eigen
-	VecX z_opt = VecX::Zero(subspaceDim);
-	for (int i = 0; i < subspaceDim; i++)
-		z_opt(i) = z(i);
+	Eigen::Map<const VecX> z_opt(z.begin(), z.size());
 
-	coefficients = w0 + U * z_opt;  // TODO: Can we directly minimize on the member variable?
+	// TODO: Can we directly minimize on the member variable?
+	coefficients = w0 + U * z_opt;  
 
 	progress.reset();
 }

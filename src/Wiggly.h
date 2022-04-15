@@ -6,6 +6,7 @@
 
 #include <UT/UT_Vector3.h>
 #include <UT/UT_Array.h>
+#include <UT/UT_ThreadedAlgorithm.h>
 #include <GU/GU_Detail.h>
 
 #include "Eigen/Dense"
@@ -83,9 +84,15 @@ namespace HDK_Wiggly {
 		scalar bDot(const float t, const scalar delta, const scalar lambda, const int i);
 		scalar bDDot(const float t, const scalar delta, const scalar lambda, const int i);
 
+		THREADED_METHOD3(Wiggly, shouldMultithread(), u, VecX&, out, const float, t, const VecX&, coeffs);
+		void uPartial(VecX& out, const float t, const VecX& coeffs, const UT_JobInfo& info);
+		
+		THREADED_METHOD3(Wiggly, shouldMultithread(), uDot, VecX&, out, const float, t, const VecX&, coeffs);
+		void uDotPartial(VecX& out, const float t, const VecX& coeffs, const UT_JobInfo& info);
+
 		// Displacement Functions
-		VecX u(const float t, const VecX& coeffs);
-		VecX uDot(const float t, const VecX& coeffs);
+		// VecX u(const float t, const VecX& coeffs);
+		// VecX uDot(const float t, const VecX& coeffs);
 
 		// Wiggly Splines
 		scalar wiggly(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
@@ -94,7 +101,8 @@ namespace HDK_Wiggly {
 
 		// Energy Functions
 		scalar keyframeEnergy(const VecX& coeffs);
-		scalar dynamicsEnergy(const VecX& coeffs);
+		THREADED_METHOD2(Wiggly, shouldMultithread(), dynamicsEnergy, scalar&, sum, const VecX&, coeffs);
+		void dynamicsEnergyPartial(scalar& sum, const VecX& coeffs, const UT_JobInfo& info);
 		scalar integralEnergy(const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 
 		int getSegmentIdx(const float t);
@@ -107,6 +115,7 @@ namespace HDK_Wiggly {
 		/* Get the lambda constant */
 		inline scalar getLambda(const int& i) { return eigenValues(i); }
 
+		inline bool shouldMultithread() { return parms.d > 1; }
 
 		int getNumCoeffs() { return 4 * (keyframes.size() - 1); }
 		/* Get the total number of DOF (i.e. x, y, z for every node)*/
