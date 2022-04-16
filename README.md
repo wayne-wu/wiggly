@@ -1,20 +1,19 @@
 # Wiggly: Animating Deformable Objects Using Spacetime Constraints
+University of Pennsylvania, CIS 660: Advanced Topics in Computer Graphics
+
+[Wayne Wu](https://www.wuwayne.com/) and Aditya Abhyankar
+
+## Installation
+To use the tools without building, simply copy the `dso`, `config`, `otls` folders to your HOUDINI_USER_PREF_DIR.
 
 ## Build Instruction
-To build the C++ code, you must have cmake and a compiler installed.
-For Windows/Visual Studio, you can generate the solution by using cmake-gui
 
-```
-cd \path\to\wiggly
-mkdir build
-cd build
-cmake-gui ..
-```
+### Dependencies
+* [cmake](https://cmake.org/)
+* [dlib](http://dlib.net/)
 
-Inside cmake-gui: 
-1. Click "Add Entry" to add a new STRING value called `CMAKE_PREFIX_PATH` pointing to `/path/to/houdini/toolkit/cmake`.
-2. Click "Configure" and make sure platform is x64.
-3. Click "Generate" to generate the solution.
+To build the C++ code, you must install the dependencies listed above and have an appropriate compiler. You should also modify `src/CMakeLists.txt` to point to your Houdini and dlib paths.
 
-Once you have generated the solution, you can go to the build folder to open the solution in Visual Studio.
-You should be able to build the solution in Visual Studio and get the dso file right away.
+Overview
+============
+This project implements the paper: [Animating deformable objects using sparse spacetime constraints](https://dl.acm.org/doi/10.1145/2601097.2601156) by Schulz et al. in Houdini. As part of the authoring tool, we have designed an intuitive workflow that allows users to easily create the sparse keyframes and generate animation with our custom solver.
