@@ -27,8 +27,8 @@ Functor for the energy objective function using dlib minimization
 */
 struct ObjFunctor
 {
-	ObjFunctor(Wiggly& obj, const MatX& U, const VecX& w0, const int& dim)
-		: wiggly(obj), U(U), w0(w0), subDim(dim) {}
+	ObjFunctor(Wiggly& obj, const MatX& U, const VecX& w0)
+		: wiggly(obj), U(U), w0(w0) {}
 
 	double operator()(const column_vector& v) const
 	{
@@ -43,7 +43,6 @@ struct ObjFunctor
 	Wiggly& wiggly;
 	const MatX& U;
 	const VecX& w0;
-	const int subDim;
 };
 
 /*
@@ -538,10 +537,17 @@ void Wiggly::compute() {
 	Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
 
 	B.segment(row, d) = phiTM * u0 + c;
-	//if (k0.hasVel)
-	//	B.segment(row + d, d) = Eigen::VectorXf::Zero(d);
+	row += d;
 
-	row += k0.hasVel ? 2*d : 1*d;
+	if (k0.hasVel)
+	{
+		UT_Array<UT_Vector3D> v0;
+		k0.detail->getAttributeAsArray<UT_Vector3D>(
+			k0.detail->findAttribute(GA_ATTRIB_POINT, "v"),
+			k0.detail->getPointRange(), v0);  // TODO: Might need to account for mismatched point range
+		B.segment(row, d) = phiTM * Eigen::Map<VecX>(v0.data()->data(), dof);
+		row += d;
+	}
 
 	// In-between constraints
 	for (int i = 1; i < keyframes.size() - 1; i++)
@@ -571,15 +577,16 @@ void Wiggly::compute() {
 				A(row + d + j, col1) = bdj;
 				A(row + d + j, col2) = -bdj;
 				
-				// C2 Continuity
-				A(row + 2*d + j, col1) = bddj;
-				A(row + 2*d + j, col2) = -bddj;
-
-				// TODO: Handle velocity case
+				if (!ki.hasVel)
+				{
+					// C2 Continuity
+					A(row + 2 * d + j, col1) = bddj;
+					A(row + 2 * d + j, col2) = -bddj;
+				}
 			}
 		}
 
-		row += 3 * d;
+		row += ki.hasVel ? 2 * d : 3 * d;
 	}
 
 	// Boundary condition at t1
@@ -603,8 +610,15 @@ void Wiggly::compute() {
 	Eigen::Map<VecX> um(km.u.data()->data(), dof);
 
 	B.segment(row, d) = phiTM * um + c;
-	//if (km.hasVel)
-	//	B.segment(row+d, d) = Eigen::VectorXf::Zero(d);
+	row += d;
+	if (km.hasVel)
+	{
+		UT_Array<UT_Vector3D> vm;
+		km.detail->getAttributeAsArray<UT_Vector3D>(
+			km.detail->findAttribute(GA_ATTRIB_POINT, "v"),
+			km.detail->getPointRange(), vm);
+		B.segment(row, d) = phiTM * Eigen::Map<VecX>(vm.data()->data(), dof);
+	}
 
 #if DEBUG
 	std::cout << "===========A============" << std::endl;
@@ -646,7 +660,7 @@ void Wiggly::compute() {
 	for (int i = 0; i < z.size(); i++)
 		z(i) = 1.0;
 
-	ObjFunctor objective(*this, U, w0, subspaceDim);
+	ObjFunctor objective(*this, U, w0);
 
 	dlib::find_min_using_approximate_derivatives(
 		dlib::bfgs_search_strategy(),
