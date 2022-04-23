@@ -1,6 +1,7 @@
 #include "GU/GU_PrimTetrahedron.h"
 #include "UT/UT_Interrupt.h"
 #include "UT/UT_UniquePtr.h"
+#include "UT/UT_Set.h"
 
 #include "Wiggly.h"
 
@@ -13,6 +14,7 @@
 #include <iostream>
 
 #define DEBUG 0
+#define DEBUG_MK 0
 #define DEBUG_EIGEN 0
 #define CANTOR(a, b) (a + b) * (a + b + 1) / 2 + a
 
@@ -311,7 +313,7 @@ scalar Wiggly::wiggly(const float t, const int d, const scalar delta, const scal
 	for(int l = 0; l < 4; l++)
 		sum += coeffs[getCoeffIdx(k, d, l)] * b(t, delta, lambda, l);
 
-	return sum - getC(lambda);
+	return sum - getC(d, lambda);
 }	
 
 /*
@@ -329,7 +331,7 @@ scalar Wiggly::wigglyDot(const float t, const int d, const scalar delta, const s
 }
 
 /*
-Compute the first derivative of the wiggly spline
+Compute the second derivative of the wiggly spline
 */
 scalar Wiggly::wigglyDDot(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs)
 {
@@ -414,12 +416,25 @@ scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 			if (ptIdx < 0) 
 				continue;
 
+			// Calculate point mass. TODO: Maybe move this somewhere else?
+			GA_OffsetArray primitives;
+			mesh->getPrimitivesReferencingPoint(primitives, mesh->pointOffset(ptIdx));
+			
+			scalar m = 0.0;
+			for (GA_Offset pOff : primitives)
+			{
+				const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(pOff);
+				m += tet->calcVolume(UT_Vector3(0, 0, 0));
+			}
+			m *= 0.25;
+
+
 			if (k.hasPos) 
-				posDiff += k.u[ptIdx].distance2(
+				posDiff += m * k.u[ptIdx].distance2(
 					UT_Vector3D(uPos(3 * ptIdx), uPos(3 * ptIdx + 1), uPos(3 * ptIdx + 2)));
 
 			if (k.hasVel)
-				velDiff += v_h.get(k.detail->pointOffset(ptIdx)).distance2(
+				velDiff += m * v_h.get(k.detail->pointOffset(ptIdx)).distance2(
 					UT_Vector3D(uVel(3 * ptIdx), uVel(3 * ptIdx + 1), uVel(3 * ptIdx + 2)));
 		}
 		total += posDiff * parms.cA;
@@ -435,7 +450,7 @@ scalar Wiggly::integrand(const float t, const int d, const scalar delta, const s
 {
 	scalar tmp = wigglyDDot(t, d, delta, lambda, coeffs) + 
 		2 * delta * wigglyDot(t, d, delta, lambda, coeffs) + 
-		lambda * wiggly(t, d, delta, lambda, coeffs) + parms.g;
+		lambda * wiggly(t, d, delta, lambda, coeffs) + parms.g[d%3];
 	return tmp * tmp;
 }
 
@@ -523,7 +538,7 @@ void Wiggly::compute() {
 	{
 		scalar lambda = getLambda(i);
 		scalar delta = getDelta(lambda);
-		c(i) = getC(lambda);
+		c(i) = getC(d, lambda);
 
 		for (int j = 0; j < 4; j++)
 		{
@@ -536,7 +551,7 @@ void Wiggly::compute() {
 
 	Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
 
-	B.segment(row, d) = phiTM * u0 + c;
+	B.segment(row, d) = phiTM * u0 +c;
 	row += d;
 
 	if (k0.hasVel)
@@ -609,7 +624,7 @@ void Wiggly::compute() {
 
 	Eigen::Map<VecX> um(km.u.data()->data(), dof);
 
-	B.segment(row, d) = phiTM * um + c;
+	B.segment(row, d) = phiTM * um +c;
 	row += d;
 	if (km.hasVel)
 	{
@@ -640,6 +655,7 @@ void Wiggly::compute() {
 	{
 		// Can be solved exactly
 		coefficients = A.colPivHouseholderQr().solve(B);
+		progress.reset();
 		return;
 	}
 
@@ -676,6 +692,138 @@ void Wiggly::compute() {
 }
 
 /*
+Build the mass and stiffness matrix based connectivity.
+All mass and stiffness are assumed to be constant.
+*/
+void Wiggly::calculateMK_Connectivity() 
+{
+	const scalar m = 1.0;
+	const scalar k = 50.0;
+
+	M.diagonal().setConstant(m);
+
+	UT_Set<int> visitedEdges;
+
+	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
+	{
+		if (progress->wasInterrupted())
+			return;
+
+		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
+
+		for (int i = 0; i < 6; i++)
+		{
+			int i0; int i1;
+			tet->getEdgeIndices(i, i0, i1);
+
+			const GA_Index pt1idx = tet->getPointIndex(i0);
+			const GA_Index pt2idx = tet->getPointIndex(i1);
+
+			if (!visitedEdges.insert(
+				pt1idx < pt2idx ? CANTOR(pt1idx, pt2idx) : CANTOR(pt2idx, pt1idx)).second)
+				continue;
+
+			int p1x = 3 * pt1idx + 0;
+			int p1y = 3 * pt1idx + 1;
+			int p1z = 3 * pt1idx + 2;
+
+			int p2x = 3 * pt2idx + 0;
+			int p2y = 3 * pt2idx + 1;
+			int p2z = 3 * pt2idx + 2;
+
+			K(p1x, p1x) -= k;
+			K(p1y, p1y) -= k;
+			K(p1z, p1z) -= k;
+
+			K(p2x, p2x) -= k;
+			K(p2y, p2y) -= k;
+			K(p2z, p2z) -= k;
+
+			K(p1x, p2x) += k;
+			K(p2x, p1x) += k;
+
+			K(p1y, p2y) += k;
+			K(p2y, p1y) += k;
+			
+			K(p1z, p2z) += k;
+			K(p2z, p1z) += k;
+		}
+	}
+}
+
+void Wiggly::calculateMK_FEM()
+{
+	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
+	{
+		if (progress->wasInterrupted())
+			return;
+
+		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
+
+		int subrows[12];
+
+		Eigen::Matrix4d m;
+		for (int i = 0; i < 4; i++)
+		{
+			int idx = (i + 1) % 4; // shift index by 1 so that it's 1->2->3->0
+			const UT_Vector3F& p = tet->getPos3(idx);
+			m(i, 0) = 1;
+			m(i, 1) = p.x();
+			m(i, 2) = p.y();
+			m(i, 3) = p.z();
+
+			const GA_Index ptIdx = tet->getPointIndex(idx);
+			subrows[3 * i + 0] = 3 * ptIdx + 0;
+			subrows[3 * i + 1] = 3 * ptIdx + 1;
+			subrows[3 * i + 2] = 3 * ptIdx + 2;
+		}
+
+		scalar V = m.determinant() / 6.; // tet->calcVolume(UT_Vector3(0, 0, 0));
+
+		m = m.transpose().inverse().eval();
+		m = 6 * V * m;
+
+		auto a = m.col(0);
+		auto b = m.col(1);
+		auto c = m.col(2);
+		auto d = m.col(3);
+
+		MatX B = MatX::Zero(6, 12);
+
+		B << b[0], 0, 0, b[1], 0, 0, b[2], 0, 0, b[3], 0, 0,
+			0, c[0], 0, 0, c[1], 0, 0, c[2], 0, 0, c[3], 0,
+			0, 0, d[0], 0, 0, d[1], 0, 0, d[2], 0, 0, d[3],
+			c[0], b[0], 0, c[1], b[1], 0, c[2], b[2], 0, c[3], b[3], 0,
+			0, d[0], c[0], 0, d[1], c[1], 0, d[2], c[2], 0, d[3], c[3],
+			d[0], 0, b[0], d[1], 0, b[1], d[2], 0, b[2], d[3], 0, b[3];
+
+		B *= 1.0 / (6.0 * V);
+
+		MatX D = MatX::Zero(6, 6);
+		scalar v = parms.poisson;
+		scalar E = parms.young;
+
+		D.block(0, 0, 3, 3).setConstant(v);
+		D(0, 0) = D(1, 1) = D(2, 2) = (1 - v);
+		D(3, 3) = D(4, 4) = D(5, 5) = (1 - 2 * v) * 0.5;
+		D *= E / ((1 + v) * (1 - 2 * v));
+
+		K(subrows, subrows) += V * (B.transpose() * D * B);
+
+		MatX subM = MatX::Zero(12, 12);
+		subM.diagonal().setConstant(2);
+		for (int i : { 3, 6, 9 })
+		{
+			subM.diagonal(i).setConstant(1);
+			subM.diagonal(-i).setConstant(1);
+		}
+		subM *= parms.p * V / 20.0;
+
+		M(subrows, subrows) += subM;
+	}
+}
+
+/*
 Compute eigenvalues and eigenvectors based on stiffness and mass matrices
 as part of the precompute step. This only needs to be recomputed if the mesh changes.
 */
@@ -697,76 +845,9 @@ void Wiggly::preCompute() {
 	*/
 	M = MatX::Zero(dof, dof);
 
-	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
-	{
-		if (progress->wasInterrupted())
-			return;
+	calculateMK_FEM();
 
-		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
-
-		int subrows[12];
-
-		Eigen::Matrix4d m;
-		for (int i = 0; i < 4; i++)
-		{
-			int idx = (i + 1) % 4; // shift index by 1 so that it's 1->2->3->0
-			const UT_Vector3F& p = tet->getPos3(idx);
-			m(i, 0) = 1;
-			m(i, 1) = p.x();
-			m(i, 2) = p.y();
-			m(i, 3) = p.z();
-
-			const GA_Index ptIdx = tet->getPointIndex(idx);
-			subrows[3*i + 0] = 3 * ptIdx + 0;
-			subrows[3*i + 1] = 3 * ptIdx + 1;
-			subrows[3*i + 2] = 3 * ptIdx + 2;
-		}
-
-		scalar V = m.determinant() / 6.; // tet->calcVolume(UT_Vector3(0, 0, 0));
-
-		m = m.transpose().inverse().eval();
-		m = 6 * V * m;
-
-		auto a = m.col(0);
-		auto b = m.col(1);
-		auto c = m.col(2);
-		auto d = m.col(3);
-
-		MatX B = MatX::Zero(6,12);
-
-		B << b[0], 0, 0, b[1], 0, 0, b[2], 0, 0, b[3], 0, 0,
-					0, c[0], 0, 0, c[1], 0, 0, c[2], 0, 0, c[3], 0,
-					0, 0, d[0], 0, 0, d[1], 0, 0, d[2], 0, 0, d[3],
-					c[0], b[0], 0, c[1], b[1], 0, c[2], b[2], 0, c[3], b[3], 0,
-					0, d[0], c[0], 0, d[1], c[1], 0, d[2], c[2], 0, d[3], c[3],
-					d[0], 0, b[0], d[1], 0, b[1], d[2], 0, b[2], d[3], 0, b[3];
-
-		B *= 1.0/(6.0*V);
-
-		MatX D = MatX::Zero(6, 6);
-		scalar v = parms.poisson;
-		scalar E = parms.young;
-
-		D.block(0, 0, 3, 3).setConstant(v);
-		D(0, 0) = D(1, 1) = D(2, 2) = (1 - v);
-		D(3, 3) = D(4, 4) = D(5, 5) = (1 - 2 * v) * 0.5;
-		D *= E / ((1 + v)*(1 - 2*v));
-
-		K(subrows, subrows) += V * (B.transpose() * D * B);
-
-		MatX subM = MatX::Zero(12, 12);
-		subM.diagonal().setConstant(2);
-		for (int i : { 3, 6, 9 })
-		{
-			subM.diagonal(i).setConstant(1);
-			subM.diagonal(-i).setConstant(1);
-		}
-		subM *= parms.p*V/20.0;
-
-		M(subrows, subrows) += subM;
-	}
-
-#if DEBUG
+#if DEBUG_MK
 	Eigen::IOFormat CommaInitFmt(
 		Eigen::StreamPrecision,
 		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");

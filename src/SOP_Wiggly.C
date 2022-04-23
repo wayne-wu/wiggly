@@ -87,6 +87,16 @@ static const char* theDsFile = R"THEDSFILE(
 						name		"compute"
 						label		"Compute Settings"
 						parm {
+			        name    "pingroup"
+			        cppname "PinGroup"
+			        label   "Pin Constraint Group"
+			        type    string
+			        default { "" }
+			        parmtag { "script_action" "import soputils\nkwargs['geometrytype'] = (hou.geometryType.Points,)\nkwargs['inputindex'] = 0\nsoputils.selectGroupParm(kwargs)" }
+			        parmtag { "script_action_help" "Select geometry from an available viewport.\nShift-click to turn on Select Groups." }
+			        parmtag { "script_action_icon" "BUTTONS_reselect" }
+				    }
+						parm {
 								name    "alpha"      // Internal parameter name
 								label   "Mass Damping" // Descriptive parameter name for user interface
 								type    float
@@ -130,12 +140,9 @@ static const char* theDsFile = R"THEDSFILE(
 						parm {
 								name    "gconstant"      // Internal parameter name
 								label   "G Constant"     // Descriptive parameter name for user interface
-								type    float
-								default { "0.0" }     // Default for this parameter on new nodes
-								range   { 0.0 100.0 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								type    vector
+							  size		3
+								default { "0" "-9.81" "0" }     // Default for this parameter on new nodes
 						}
 						parm {
 								name    "epsilon"      // Internal parameter name
@@ -144,8 +151,6 @@ static const char* theDsFile = R"THEDSFILE(
 								default { "1e-7" }     // Default for this parameter on new nodes
 								range   { 1e-12 1e-3 }   // The value is prevented from going below 2 at all.
 																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
 						}
 				}
 }
@@ -206,7 +211,7 @@ SOP_Wiggly::cookVerb() const
 void
 SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 {
-		auto&& sopparms = cookparms.parms<SOP_WigglyParms>();
+		const SOP_WigglyParms& sopparms = cookparms.parms<SOP_WigglyParms>();
 		auto sopcache = (SOP_WigglyCache*)cookparms.cache();
 		
 		GU_Detail* detail = cookparms.gdh().gdpNC();    // rest geometry to be modified
@@ -214,8 +219,20 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 
 		if (bgdp->getNumPrimitives() < 2)
 		{
-			cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Need at least two keyframes.");
+			cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Need at least two constraints.");
 			return;
+		}
+
+		GOP_Manager groupManager;
+		GA_Range ptRange = detail->getPointRange();
+
+		const UT_StringHolder& pinGroupName = sopparms.getPinGroup();
+		if (pinGroupName.isstring())
+		{
+			const GA_PointGroup* pinGroup = groupManager.parsePointGroups(
+				pinGroupName, GOP_Manager::GroupCreator(detail));
+
+			ptRange = GA_Range(*pinGroup, true);
 		}
 
 		bool preComputeNeeded = true;
@@ -264,6 +281,7 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 		if (computeNeeded)
 		{
 			// GET THE KEYFRAMES DATA FROM SECOND INPUT
+
 			GA_ROHandleI f_h(bgdp, GA_ATTRIB_POINT, "frame");
 
 			Keyframes& keyframes = sopcache->wigglyObj->getKeyframes();
@@ -275,6 +293,12 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 				keyframe.frame = f_h.get(*it);
 
 				const GU_PrimPacked* packedPrim = (const GU_PrimPacked*)bgdp->getPrimitive(*it);
+				if (packedPrim == nullptr)
+				{
+					cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Invalid constraints. Use Wiggly Constraint SOP.");
+					return;
+				}
+
 				const GU_Detail* packedDetail = packedPrim->getPackedDetail().gdp();
 
 				keyframe.points = std::vector<GA_Index>(detail->getNumPoints(), -1);
@@ -294,7 +318,6 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 					int packedPtId = packedDetail->pointIndex(ptoff);
 					keyframe.points[originalPtId] = packedPtId;
 
-					// Calculate the displacement
 					keyframe.u[packedPtId] = packedDetail->getPos3(ptoff) - detail->getPos3(detail->pointOffset(originalPtId));
 				}
 
@@ -327,8 +350,7 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 
 		VecX uPos = sopcache->wigglyObj->u(f);
 
-		GA_Offset ptoff;
-		GA_FOR_ALL_PTOFF(detail, ptoff)
+		for(GA_Offset ptoff : ptRange)
 		{
 			UT_Vector3 p = detail->getPos3(ptoff);
 

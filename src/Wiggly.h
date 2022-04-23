@@ -11,7 +11,6 @@
 
 #include "Eigen/Dense"
 
-
 // NOTE: Not sure if we should include Houdini dependencies here.
 // On one hand, it would save memory to not have to duplicate data,
 // but then you can't decouple the system anymore
@@ -47,10 +46,10 @@ namespace HDK_Wiggly {
 	{
 		scalar alpha;
 		scalar beta;
-		scalar g = 1;
+		UT_Vector3D g;
 		int d = 20;
-		scalar cA = 1.0;
-		scalar cB = 1.0;
+		scalar cA = 100.0;
+		scalar cB = 100.0;
 		scalar p = 1000;
 		scalar young;
 		scalar eps = 1e-6;
@@ -105,7 +104,7 @@ namespace HDK_Wiggly {
 		float getNormalizedTime(const float frame);
 
 		/* Get the c constant */
-		inline scalar getC(const scalar& lambda) { return abs(lambda) > parms.eps ? parms.g / abs(lambda) : 0.0; }
+		inline scalar getC(const int& d, const scalar& lambda) { return abs(lambda) > parms.eps ? parms.g[d%3] / abs(lambda) : 0.0; }
 		/* Get the damping constant */
 		inline scalar getDelta(const scalar& lambda) { return 0.5 * (parms.alpha + parms.beta * lambda); }
 		/* Get the lambda constant */
@@ -121,6 +120,9 @@ namespace HDK_Wiggly {
 
 		/* Get the flattened idx of a coefficient */
 		inline int getCoeffIdx(const int k, const int d, const int l) { return k * 4 * parms.d + 4 * d + l; }
+
+		void calculateMK_FEM();
+		void calculateMK_Connectivity();
 
 		const GU_Detail* mesh;
 		Keyframes keyframes;
