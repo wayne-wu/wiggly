@@ -21,14 +21,14 @@ namespace HDK_Wiggly {
 	typedef double scalar;  // <------- Set precision here
 	typedef Eigen::VectorXd VecX;
 	typedef Eigen::MatrixXd MatX;
-
-	typedef std::pair<int, int> Element;
+	
+	typedef std::vector<int> IndexMap;
 
 	struct Keyframe
 	{
 		float t;
 		float frame;
-		std::vector<GA_Index> points;
+		GA_OffsetArray range;
 		std::vector<UT_Vector3D> u;
 		bool hasPos;
 		bool hasVel;
@@ -75,6 +75,7 @@ namespace HDK_Wiggly {
 		Keyframes& getKeyframes() { return keyframes; }
 		WigglyParms& getParms() { return parms; }
 		UT_AutoInterrupt& getProgress() { return *progress; }
+		void setGroupIdx(const IndexMap& arr) { groupIdx = arr; }
 
 	protected:
 
@@ -114,7 +115,7 @@ namespace HDK_Wiggly {
 
 		int getNumCoeffs() { return 4 * (keyframes.size() - 1); }
 		/* Get the total number of DOF (i.e. x, y, z for every node)*/
-		int getDof() { return 3 * getNumPoints(); }
+		int getDof() { return mDof; }
 		/* Get the total number of coefficients across all wiggly splines */
 		int getTotalNumCoeffs() { return 4 * (keyframes.size() - 1) * parms.d; }
 
@@ -124,11 +125,15 @@ namespace HDK_Wiggly {
 		void calculateMK_FEM();
 		void calculateMK_Connectivity();
 
+		int mDof;
+
 		const GU_Detail* mesh;
 		Keyframes keyframes;
 		WigglyParms parms;
 
 		UT_UniquePtr<UT_AutoInterrupt> progress;
+
+		IndexMap groupIdx;
 
 		MatX M;
 		MatX K;

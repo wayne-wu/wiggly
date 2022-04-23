@@ -226,13 +226,23 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 		GOP_Manager groupManager;
 		GA_Range ptRange = detail->getPointRange();
 
-		const UT_StringHolder& pinGroupName = sopparms.getPinGroup();
-		if (pinGroupName.isstring())
+		const UT_StringHolder& groupPattern = sopparms.getPinGroup();
+		if (groupPattern.isstring())
 		{
 			const GA_PointGroup* pinGroup = groupManager.parsePointGroups(
-				pinGroupName, GOP_Manager::GroupCreator(detail));
-
+				groupPattern, GOP_Manager::GroupCreator(detail));
 			ptRange = GA_Range(*pinGroup, true);
+		}
+
+		// groupIdx will map from originalPtIdx to constrainedIdx
+		IndexMap groupIdx = IndexMap(detail->getNumPoints(), -1);
+		UT_Set<GA_Index> unconstrainedPts;
+
+		int n = 0;
+		for (GA_Offset ptOff : ptRange) {
+			GA_Index ptIdx = detail->pointIndex(ptOff);
+			groupIdx[ptIdx] = n++;
+			unconstrainedPts.insert(ptIdx);
 		}
 
 		bool preComputeNeeded = true;
@@ -266,6 +276,7 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			parms.physical = sopparms.getPhysical();
 
 			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
+			sopcache->wigglyObj->setGroupIdx(groupIdx);
 			sopcache->wigglyObj->preCompute();
 
 			sopcache->prevInput1Id = detail->getUniqueId();
@@ -301,24 +312,25 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 
 				const GU_Detail* packedDetail = packedPrim->getPackedDetail().gdp();
 
-				keyframe.points = std::vector<GA_Index>(detail->getNumPoints(), -1);
-
 				keyframe.hasPos = true;
 				keyframe.hasVel = packedDetail->findAttribute(GA_ATTRIB_POINT, "v") != nullptr;
 
 				GA_ROHandleI pt_h(packedDetail, GA_ATTRIB_POINT, "original");
 
-				keyframe.u = std::vector<UT_Vector3D>(packedDetail->getNumPoints());
+				keyframe.u = std::vector<UT_Vector3D>(n);
 
 				GA_Offset ptoff;
 				GA_FOR_ALL_PTOFF(packedDetail, ptoff)
 				{
 					// Store all the keyframes
-					int originalPtId = pt_h.get(ptoff);
-					int packedPtId = packedDetail->pointIndex(ptoff);
-					keyframe.points[originalPtId] = packedPtId;
+					int ogPt = pt_h.get(ptoff);
 
-					keyframe.u[packedPtId] = packedDetail->getPos3(ptoff) - detail->getPos3(detail->pointOffset(originalPtId));
+					// If the point is constrained, we do not store it
+					if (unconstrainedPts.find(ogPt) == unconstrainedPts.end())
+						continue;
+
+					keyframe.range.append(ptoff);
+					keyframe.u[groupIdx[ogPt]] = packedDetail->getPos3(ptoff) - detail->getPos3(detail->pointOffset(ogPt));
 				}
 
 				keyframe.detail = packedDetail;
@@ -354,8 +366,8 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 		{
 			UT_Vector3 p = detail->getPos3(ptoff);
 
-			int ptidx = 3 * detail->pointIndex(ptoff);
-			p += UT_Vector3(uPos(ptidx), uPos(ptidx + 1), uPos(ptidx + 2));
+			int uIdx = 3 * groupIdx[detail->pointIndex(ptoff)];
+			p += UT_Vector3(uPos(uIdx), uPos(uIdx + 1), uPos(uIdx + 2));
 
 			detail->setPos3(ptoff, p);
 		}

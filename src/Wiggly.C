@@ -408,17 +408,16 @@ scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 		uDot(uVel, k.t, coeffs);
 
 		GA_ROHandleV3D v_h(k.detail, GA_ATTRIB_POINT, "v");
+		GA_ROHandleI p_h(k.detail, GA_ATTRIB_POINT, "original");
 
 		scalar posDiff = 0, velDiff = 0;
-		for (int j = 0; j < k.points.size(); ++j)
+		for (GA_Offset ptOff : k.range)
 		{
-			int ptIdx = k.points[j];
-			if (ptIdx < 0) 
-				continue;
+			GA_Index ogPt = p_h.get(ptOff);
 
 			// Calculate point mass. TODO: Maybe move this somewhere else?
 			GA_OffsetArray primitives;
-			mesh->getPrimitivesReferencingPoint(primitives, mesh->pointOffset(ptIdx));
+			mesh->getPrimitivesReferencingPoint(primitives, mesh->pointOffset(ogPt));
 			
 			scalar m = 0.0;
 			for (GA_Offset pOff : primitives)
@@ -428,14 +427,15 @@ scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 			}
 			m *= 0.25;
 
+			int uIdx = groupIdx[ogPt];
 
-			if (k.hasPos) 
-				posDiff += m * k.u[ptIdx].distance2(
-					UT_Vector3D(uPos(3 * ptIdx), uPos(3 * ptIdx + 1), uPos(3 * ptIdx + 2)));
+			if (k.hasPos)
+				posDiff += m * k.u[uIdx].distance2(
+					UT_Vector3D(uPos(3*uIdx), uPos(3*uIdx + 1), uPos(3*uIdx + 2)));
 
 			if (k.hasVel)
-				velDiff += m * v_h.get(k.detail->pointOffset(ptIdx)).distance2(
-					UT_Vector3D(uVel(3 * ptIdx), uVel(3 * ptIdx + 1), uVel(3 * ptIdx + 2)));
+				velDiff += m * v_h.get(ptOff).distance2(
+					UT_Vector3D(uVel(3*uIdx), uVel(3*uIdx + 1), uVel(3*uIdx + 2)));
 		}
 		total += posDiff * parms.cA;
 		total += velDiff * parms.cB;
@@ -551,15 +551,16 @@ void Wiggly::compute() {
 
 	Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
 
-	B.segment(row, d) = phiTM * u0 +c;
+	B.segment(row, d) = phiTM * u0 + c;
 	row += d;
 
 	if (k0.hasVel)
 	{
-		UT_Array<UT_Vector3D> v0;
-		k0.detail->getAttributeAsArray<UT_Vector3D>(
-			k0.detail->findAttribute(GA_ATTRIB_POINT, "v"),
-			k0.detail->getPointRange(), v0);  // TODO: Might need to account for mismatched point range
+		GA_ROHandleV3D v_h(k0.detail, GA_ATTRIB_POINT, "v");
+		GA_ROHandleI p_h(k0.detail, GA_ATTRIB_POINT, "original");
+		std::vector<UT_Vector3D> v0(dof/3);
+		for (GA_Offset ptoff : k0.range)
+			v0[groupIdx[p_h.get(ptoff)]] = v_h.get(ptoff);
 		B.segment(row, d) = phiTM * Eigen::Map<VecX>(v0.data()->data(), dof);
 		row += d;
 	}
@@ -624,14 +625,15 @@ void Wiggly::compute() {
 
 	Eigen::Map<VecX> um(km.u.data()->data(), dof);
 
-	B.segment(row, d) = phiTM * um +c;
+	B.segment(row, d) = phiTM * um + c;
 	row += d;
 	if (km.hasVel)
 	{
-		UT_Array<UT_Vector3D> vm;
-		km.detail->getAttributeAsArray<UT_Vector3D>(
-			km.detail->findAttribute(GA_ATTRIB_POINT, "v"),
-			km.detail->getPointRange(), vm);
+		GA_ROHandleV3D v_h(km.detail, GA_ATTRIB_POINT, "v");
+		GA_ROHandleI p_h(km.detail, GA_ATTRIB_POINT, "original");
+		std::vector<UT_Vector3D> vm(dof/3);
+		for (GA_Offset ptoff : km.range)
+			vm[groupIdx[p_h.get(ptoff)]] = v_h.get(ptoff);
 		B.segment(row, d) = phiTM * Eigen::Map<VecX>(vm.data()->data(), dof);
 	}
 
@@ -831,7 +833,7 @@ void Wiggly::preCompute() {
 
   progress = UTmakeUnique<UT_AutoInterrupt>("Assembling stiffness and mass matrices.");
 	
-	int dof = getDof();
+	int dof = 3 * getNumPoints();
 
 	/*
 	Compute the global stiffness matrix of the tetrahedral mesh.
@@ -846,6 +848,24 @@ void Wiggly::preCompute() {
 	M = MatX::Zero(dof, dof);
 
 	calculateMK_FEM();
+
+	// Slice K and M to contain only the unconstrained nodes
+	std::vector<int> sliceIndices;
+	for (int i = 0; i < groupIdx.size(); i++)
+	{
+		if (groupIdx[i] < 0) continue;
+		sliceIndices.push_back(3 * i + 0);
+		sliceIndices.push_back(3 * i + 1);
+		sliceIndices.push_back(3 * i + 2);
+	}
+
+	mDof = sliceIndices.size();
+
+	parms.d = std::min(mDof, parms.d);
+
+	K = K(sliceIndices, sliceIndices);
+	M = M(sliceIndices, sliceIndices);
+
 
 #if DEBUG_MK
 	Eigen::IOFormat CommaInitFmt(
