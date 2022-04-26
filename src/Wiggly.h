@@ -96,7 +96,14 @@ namespace HDK_Wiggly {
 		scalar wigglyDDot(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 
 		// Energy Functions
+		THREADED_METHOD6(
+			Wiggly, k.u.size()>1, perKeyEnergy, scalar&, total, const Keyframe&, k, 
+			const VecX&, uPos, const VecX&, uVel, const GA_ROHandleV3D&, v_h, const GA_ROHandleI&, og_h);
+		void perKeyEnergyPartial(
+			scalar& total, const Keyframe& k, const VecX& uPos, const VecX& uVel, 
+			const GA_ROHandleV3D& v_h, const GA_ROHandleI& og_h, const UT_JobInfo& info);
 		scalar keyframeEnergy(const VecX& coeffs);
+
 		THREADED_METHOD2(Wiggly, shouldMultithread(), dynamicsEnergy, scalar&, sum, const VecX&, coeffs);
 		void dynamicsEnergyPartial(scalar& sum, const VecX& coeffs, const UT_JobInfo& info);
 		scalar integralEnergy(const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
@@ -122,7 +129,7 @@ namespace HDK_Wiggly {
 		/* Get the flattened idx of a coefficient */
 		inline int getCoeffIdx(const int k, const int d, const int l) { return k * 4 * parms.d + 4 * d + l; }
 
-		void calculateMK_FEM();
+		void calculateMK_FEM(MatX& K, MatX& M);
 		void calculateMK_Connectivity();
 
 		int mDof;

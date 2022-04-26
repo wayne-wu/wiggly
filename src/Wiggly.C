@@ -394,6 +394,47 @@ scalar Wiggly::totalEnergy(const VecX& c)
 	return k + parms.physical * d;
 }
 
+void Wiggly::perKeyEnergyPartial(
+	scalar& total, const Keyframe& k, const VecX& uPos, const VecX& uVel,
+	const GA_ROHandleV3D & v_h, const GA_ROHandleI& og_h, const UT_JobInfo& info)
+{
+	int i, n;
+
+	scalar posDiff = 0, velDiff = 0;
+	for (info.divideWork(k.range.size(), i, n); i < n; i++)
+	{
+		GA_Offset ptOff = k.range[i];
+		GA_Index ogPt = og_h.get(ptOff);
+
+		// Calculate point mass. TODO: Maybe pre-calculate the mass?
+		GA_OffsetArray primitives;
+		mesh->getPrimitivesReferencingPoint(primitives, mesh->pointOffset(ogPt));
+
+		scalar m = 0.0;
+		for (GA_Offset pOff : primitives)
+		{
+			const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(pOff);
+			m += tet->calcVolume(UT_Vector3(0, 0, 0));
+		}
+		m *= 0.25;
+
+		int uIdx = groupIdx[ogPt];
+
+		if (k.hasPos)
+			posDiff += m * k.u[uIdx].distance2(
+				UT_Vector3D(uPos(3 * uIdx), uPos(3 * uIdx + 1), uPos(3 * uIdx + 2)));
+
+		if (k.hasVel)
+			velDiff += m * v_h.get(ptOff).distance2(
+				UT_Vector3D(uVel(3 * uIdx), uVel(3 * uIdx + 1), uVel(3 * uIdx + 2)));
+	}
+
+	{
+		UT_AutoJobInfoLock a(info);
+		total += posDiff * parms.cA + velDiff * parms.cB;
+	}
+}
+
 /*
 Compute the energy based on constraints
 */
@@ -408,38 +449,12 @@ scalar Wiggly::keyframeEnergy(const VecX& coeffs)
 		uDot(uVel, k.t, coeffs);
 
 		GA_ROHandleV3D v_h(k.detail, GA_ATTRIB_POINT, "v");
-		GA_ROHandleI p_h(k.detail, GA_ATTRIB_POINT, "original");
+		GA_ROHandleI og_h(k.detail, GA_ATTRIB_POINT, "original");
 
-		scalar posDiff = 0, velDiff = 0;
-		for (GA_Offset ptOff : k.range)
-		{
-			GA_Index ogPt = p_h.get(ptOff);
-
-			// Calculate point mass. TODO: Maybe move this somewhere else?
-			GA_OffsetArray primitives;
-			mesh->getPrimitivesReferencingPoint(primitives, mesh->pointOffset(ogPt));
-			
-			scalar m = 0.0;
-			for (GA_Offset pOff : primitives)
-			{
-				const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(pOff);
-				m += tet->calcVolume(UT_Vector3(0, 0, 0));
-			}
-			m *= 0.25;
-
-			int uIdx = groupIdx[ogPt];
-
-			if (k.hasPos)
-				posDiff += m * k.u[uIdx].distance2(
-					UT_Vector3D(uPos(3*uIdx), uPos(3*uIdx + 1), uPos(3*uIdx + 2)));
-
-			if (k.hasVel)
-				velDiff += m * v_h.get(ptOff).distance2(
-					UT_Vector3D(uVel(3*uIdx), uVel(3*uIdx + 1), uVel(3*uIdx + 2)));
-		}
-		total += posDiff * parms.cA;
-		total += velDiff * parms.cB;
+		// NOTE: Do we need SplittableRange for multithreading here?
+		perKeyEnergy(total, k, uPos, uVel, v_h, og_h);
 	}
+
 	return 0.5 * total;
 }
 
@@ -672,11 +687,9 @@ void Wiggly::compute() {
 	if (progress->wasInterrupted())
 		return;
 
-	// TODO: What should the starting value be?
 	column_vector z;
 	z.set_size(subspaceDim);
-	for (int i = 0; i < z.size(); i++)
-		z(i) = 1.0;
+	z = 0.0;  // TODO: What should the starting value be?
 
 	ObjFunctor objective(*this, U, w0);
 
@@ -687,7 +700,6 @@ void Wiggly::compute() {
 
 	Eigen::Map<const VecX> z_opt(z.begin(), z.size());
 
-	// TODO: Can we directly minimize on the member variable?
 	coefficients = w0 + U * z_opt;  
 
 	progress.reset();
@@ -753,7 +765,7 @@ void Wiggly::calculateMK_Connectivity()
 	}
 }
 
-void Wiggly::calculateMK_FEM()
+void Wiggly::calculateMK_FEM(MatX& K, MatX& M)
 {
 	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
 	{
@@ -839,15 +851,15 @@ void Wiggly::preCompute() {
 	Compute the global stiffness matrix of the tetrahedral mesh.
 	Adopted from 11.2 in Finite Element Method in Engineering (6th Edition)
 	*/
-	K = MatX::Zero(dof, dof);
+	MatX K_tmp = MatX::Zero(dof, dof);
 
 	/*
 	Compute the global mass matrix of the tetrahedral mesh.
 	Adopted from 12.2.8 in Finite Element Method in Engineering (6th Edition)
 	*/
-	M = MatX::Zero(dof, dof);
+	MatX M_tmp = MatX::Zero(dof, dof);
 
-	calculateMK_FEM();
+	calculateMK_FEM(K_tmp, M_tmp);
 
 	// Slice K and M to contain only the unconstrained nodes
 	std::vector<int> sliceIndices;
@@ -863,8 +875,8 @@ void Wiggly::preCompute() {
 
 	parms.d = std::min(mDof, parms.d);
 
-	K = K(sliceIndices, sliceIndices);
-	M = M(sliceIndices, sliceIndices);
+	K = K_tmp(sliceIndices, sliceIndices);
+	M = M_tmp(sliceIndices, sliceIndices);
 
 
 #if DEBUG_MK

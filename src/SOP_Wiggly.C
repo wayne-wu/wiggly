@@ -142,7 +142,7 @@ static const char* theDsFile = R"THEDSFILE(
 								label   "G Constant"     // Descriptive parameter name for user interface
 								type    vector
 							  size		3
-								default { "0" "-9.81" "0" }     // Default for this parameter on new nodes
+								default { "0" "0" "0" }     // Default for this parameter on new nodes
 						}
 						parm {
 								name    "epsilon"      // Internal parameter name
@@ -179,6 +179,7 @@ public:
 	exint metaCacheCound2;
 
 	UT_UniquePtr<Wiggly> wigglyObj;
+	SOP_WigglyParms wigglyParms;
 };
 
 class SOP_WigglyVerb : public SOP_NodeVerb
@@ -252,7 +253,8 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			if (sopcache->prevInput1Id == detail->getUniqueId() &&
 				sopcache->primitiveListDataId1 == detail->getPrimitiveList().getDataId() &&
 				sopcache->topologyDataId1 == detail->getTopology().getDataId())
-				preComputeNeeded = false;
+				if (sopcache->wigglyParms == sopparms)
+					preComputeNeeded = false;
 
 		if (preComputeNeeded)
 		{
@@ -278,6 +280,10 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
 			sopcache->wigglyObj->setGroupIdx(groupIdx);
 			sopcache->wigglyObj->preCompute();
+
+			// TODO: Find a better way to store the parameters.
+			// Maybe we can pass the sopparms object directly to wiggly
+			sopcache->wigglyParms = sopparms;
 
 			sopcache->prevInput1Id = detail->getUniqueId();
 			sopcache->primitiveListDataId1 = detail->getPrimitiveList().getDataId();
