@@ -51,36 +51,27 @@ static const char* theDsFile = R"THEDSFILE(
         name        parameters
 				groupsimple {
 						name		"properties"
-						label		"Object Properties"
+						label		"Material Properties"
 						parm {
-								name    "massdensity"      // Internal parameter name
-								label   "Mass Density" // Descriptive parameter name for user interface
+								name    "massdensity"
+								label   "Mass Density"
 								type    float
-								default { "1000.0" }     // Default for this parameter on new nodes
-								range   { 0! 5000.0 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "1.0" }    
+								range   { 0! 100.0 } 
 					  }
 						parm {
-								name    "young"      // Internal parameter name
-								label   "Young Modulus" // Descriptive parameter name for user interface
+								name    "young"     
+								label   "Stiffness" 
 								type    float
-								default { "100.0" }     // Default for this parameter on new nodes
-								range   { 1! 1000.0 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "75.0" }    
+								range   { 1! 1000.0 }  
 						}
 						parm {
-								name    "poisson"      // Internal parameter name
-								label   "Poisson Ratio" // Descriptive parameter name for user interface
+								name    "poisson"      
+								label   "Poisson Ratio"
 								type    float
-								default { "0.3" }     // Default for this parameter on new nodes
-								range   { 0! 1! }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "0.45" }
+								range   { 0! 0.499! }
 						}
 				}
 				groupsimple {
@@ -97,61 +88,57 @@ static const char* theDsFile = R"THEDSFILE(
 			        parmtag { "script_action_icon" "BUTTONS_reselect" }
 				    }
 						parm {
-								name    "alpha"      // Internal parameter name
-								label   "Mass Damping" // Descriptive parameter name for user interface
+								name    "alpha"
+								label   "Mass Damping"
 								type    float
-								default { "1.0" }     // Default for this parameter on new nodes
-								range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "0.05" } 
+								range   { 0! 1.0 }
 						}
 						parm {
-								name    "beta"      // Internal parameter name
-								label   "Stiffness Damping" // Descriptive parameter name for user interface
+								name    "beta"
+								label   "Stiffness Damping"
 								type    float
-								default { "0.001" }     // Default for this parameter on new nodes
-								range   { 0! 100.0 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "0.005" }
+								range   { 0! 0.01 }
 						}
 						parm {
-								name    "physical"      // Internal parameter name
-								label   "Physicalness" // Descriptive parameter name for user interface
+								name    "physical"
+								label   "Dynamics"
 								type    float
-								default { "0.001" }     // Default for this parameter on new nodes
-								range   { 0! 1.0 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "0.001" }
+								range   { 0! 1.0 }
 						}
 						parm {
-								name    "modesnum"      // Internal parameter name
-								label   "Number of Modes" // Descriptive parameter name for user interface
+								name    "modesnum"
+								label   "Number of Modes"
 								type    integer
-								default { "20" }     // Default for this parameter on new nodes
-								range   { 10 50 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
-								export  all         // This makes the parameter show up in the toolbox
-																		// above the viewport when it's in the node's state.
+								default { "20" }
+								range   { 10 50 }
 						}
-
 						parm {
-								name    "gconstant"      // Internal parameter name
-								label   "G Constant"     // Descriptive parameter name for user interface
+								name    "gconstant"
+								label   "G Constant"
 								type    vector
 							  size		3
-								default { "0" "0" "0" }     // Default for this parameter on new nodes
+								default { "0" "0" "0" }
 						}
 						parm {
-								name    "epsilon"      // Internal parameter name
-								label   "Epsilon"     // Descriptive parameter name for user interface
+								name    "epsilon"
+								label   "Epsilon"
 								type    float
-								default { "1e-7" }     // Default for this parameter on new nodes
-								range   { 1e-12 1e-3 }   // The value is prevented from going below 2 at all.
-																		// The UI slider goes up to 50, but the value can go higher.
+								default { "1e-7" }
+								range   { 1e-12 1e-3 }
 						}
+				}
+				groupsimple {
+						name		"visualization"
+						label		"Visualization"
+						parm {
+								name    "guidegeo"
+								label   "Show Guide Geometry"
+								type    toggle
+								default { "1" }    
+					  }
 				}
 }
 )THEDSFILE";
@@ -350,11 +337,16 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			// Validate keyframes
 			if (!keyframes.front().hasVel || !keyframes.back().hasVel)
 			{
-				cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Start and end keyframes must have velocity.");
+				cookparms.sopAddError(SOP_MESSAGE, "Start and end keyframes must have velocity.");
 				return;
 			}
 
-			sopcache->wigglyObj->compute();
+			int err = sopcache->wigglyObj->compute();
+			if (err > 0)
+			{
+				cookparms.sopAddError(SOP_MESSAGE, "Computation failed. Check your parameters.");
+				return;
+			}
 
 			sopcache->prevInput2Id = bgdp->getUniqueId();
 			sopcache->primitiveListDataId2 = bgdp->getPrimitiveList().getDataId();

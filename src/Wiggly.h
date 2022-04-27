@@ -65,7 +65,7 @@ namespace HDK_Wiggly {
 			: mesh(mgdp), parms(sopparms) { }
 		~Wiggly() {}
 
-		void compute();
+		int compute();
 		void preCompute();
 
 		VecX u(const float t);

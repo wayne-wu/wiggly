@@ -36,6 +36,7 @@ namespace HDK_Wiggly {
     OP_ERROR cookMySop(OP_Context& context) override
     {
       flags().setTimeDep(true);  //NOTE: Is this the right way to do it?
+      mySopFlags.setNeedGuide1(evalInt("guidegeo", 0, 0));
       return cookMyselfAsVerb(context);
     }
 

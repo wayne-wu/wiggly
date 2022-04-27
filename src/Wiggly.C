@@ -14,6 +14,7 @@
 #include <iostream>
 
 #define DEBUG 0
+#define DEBUG_AB 0
 #define DEBUG_MK 0
 #define DEBUG_EIGEN 0
 #define CANTOR(a, b) (a + b) * (a + b + 1) / 2 + a
@@ -518,11 +519,11 @@ void Wiggly::dynamicsEnergyPartial(scalar& total, const VecX& coeffs, const UT_J
 Compute the wiggly splines' coefficients based on the sparse keyframes.
 This should be recomputed when the mesh changes or the keyframes change.
 */
-void Wiggly::compute() {
+int Wiggly::compute() {
 
 	progress = UTmakeUnique<UT_AutoInterrupt>("Assembling condition matrix.");
 	if (progress->wasInterrupted())
-		return;
+		return 0;
 
 	int dof = getDof();
 	int d = parms.d;
@@ -652,32 +653,38 @@ void Wiggly::compute() {
 		B.segment(row, d) = phiTM * Eigen::Map<VecX>(vm.data()->data(), dof);
 	}
 
-#if DEBUG
+#if DEBUG_AB
 	std::cout << "===========A============" << std::endl;
 	Eigen::IOFormat CommaInitFmt(
 		Eigen::StreamPrecision,
 		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
 	std::cout << A.format(CommaInitFmt) << std::endl;
-	std::cout << "Det(A) = " << A.determinant() << std::endl;
 	std::cout << "===========b============" << std::endl;
 	std::cout << B << std::endl;
 #endif
 
 	if (progress->wasInterrupted())
-		return;
+		return 0;
 
 	int subspaceDim = numCoeffs - numConditions;
 
 	if (subspaceDim == 0)
 	{
 		// Can be solved exactly
+#if DEBUG_AB
+		std::cout << "Det(A) = " << A.determinant() << std::endl;
+#endif
 		coefficients = A.colPivHouseholderQr().solve(B);
 		progress.reset();
-		return;
+		return 0;
 	}
 
 	// NOTE: BDCSVD preferred for larger matrix
 	Eigen::BDCSVD<MatX> svd = A.bdcSvd(Eigen::ComputeFullU | Eigen::ComputeFullV);
+
+	if (svd.info() > 0)
+		return 1;
+
 	MatX U = svd.matrixV()(Eigen::all, Eigen::seq(numCoeffs - subspaceDim, Eigen::last));
 
 	VecX w0 = svd.solve(B);
@@ -685,7 +692,7 @@ void Wiggly::compute() {
 	progress.reset();
 	progress = UTmakeUnique<UT_AutoInterrupt>("Running Optimization");
 	if (progress->wasInterrupted())
-		return;
+		return 0;
 
 	column_vector z;
 	z.set_size(subspaceDim);
@@ -703,6 +710,8 @@ void Wiggly::compute() {
 	coefficients = w0 + U * z_opt;  
 
 	progress.reset();
+
+	return 0;
 }
 
 /*
