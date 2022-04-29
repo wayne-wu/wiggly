@@ -347,9 +347,15 @@ scalar Wiggly::wigglyDDot(const float t, const int d, const scalar delta, const 
 
 VecX Wiggly::u(const float f)
 {
-	float t = getNormalizedTime(f);
 	VecX out = VecX::Zero(getDof());
-	u(out, t, coefficients);
+	u(out, getNormalizedTime(f), coefficients);
+	return out;
+}
+
+VecX Wiggly::uDot(const float f)
+{
+	VecX out = VecX::Zero(getDof());
+	uDot(out, getNormalizedTime(f), coefficients);
 	return out;
 }
 
@@ -529,8 +535,19 @@ int Wiggly::compute() {
 	int d = parms.d;
 
 	int numCoeffs = getTotalNumCoeffs();
-	int numConditions = 4 * d;
-	for (int i = 1; i < keyframes.size() - 1; i++)
+	int numConditions = 0;
+
+	Keyframe& k0 = keyframes.front();
+	Keyframe& km = keyframes.back();
+
+	bool isStartFull = 3 * k0.range.size() == dof;
+	bool isEndFull = 3 * km.range.size() == dof;
+
+	if (isStartFull)
+		numConditions += k0.hasVel ? 2 * d : d;
+	if (isEndFull)
+		numConditions += km.hasVel ? 2 * d : d;
+	for (int i = 1; i < keyframes.size() - 1; ++i)
 		numConditions += keyframes[i].hasVel ? 2 * d : 3 * d;
 
 	MatX A = MatX::Zero(numConditions, numCoeffs);
@@ -548,37 +565,39 @@ int Wiggly::compute() {
 	int row = 0; // The row correlates to the number of linear conditions
 
 	// Boundary condition at t0
-	Keyframe& k0 = keyframes.front();
 	k0.t = getNormalizedTime(k0.frame);  // TODO: Where's the best place to do this?
-	for (int i = 0; i < d; i++)
+	if (isStartFull)
 	{
-		scalar lambda = getLambda(i);
-		scalar delta = getDelta(lambda);
-		c(i) = getC(d, lambda);
-
-		for (int j = 0; j < 4; j++)
+		for (int i = 0; i < d; i++)
 		{
-			int col = getCoeffIdx(0, i, j);
-			A(row + i, col) = b(k0.t, delta, lambda, j);
-			if (k0.hasVel)
-				A(row + d + i, col) = bDot(k0.t, delta, lambda, j);
+			scalar lambda = getLambda(i);
+			scalar delta = getDelta(lambda);
+			c(i) = getC(d, lambda);
+
+			for (int j = 0; j < 4; j++)
+			{
+				int col = getCoeffIdx(0, i, j);
+				A(row + i, col) = b(k0.t, delta, lambda, j);
+				if (k0.hasVel)
+					A(row + d + i, col) = bDot(k0.t, delta, lambda, j);
+			}
 		}
-	}
 
-	Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
+		Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
 
-	B.segment(row, d) = phiTM * u0 + c;
-	row += d;
-
-	if (k0.hasVel)
-	{
-		GA_ROHandleV3D v_h(k0.detail, GA_ATTRIB_POINT, "v");
-		GA_ROHandleI p_h(k0.detail, GA_ATTRIB_POINT, "original");
-		std::vector<UT_Vector3D> v0(dof/3);
-		for (GA_Offset ptoff : k0.range)
-			v0[groupIdx[p_h.get(ptoff)]] = v_h.get(ptoff);
-		B.segment(row, d) = phiTM * Eigen::Map<VecX>(v0.data()->data(), dof);
+		B.segment(row, d) = phiTM * u0 + c;
 		row += d;
+
+		if (k0.hasVel)
+		{
+			GA_ROHandleV3D v_h(k0.detail, GA_ATTRIB_POINT, "v");
+			GA_ROHandleI p_h(k0.detail, GA_ATTRIB_POINT, "original");
+			std::vector<UT_Vector3D> v0(dof / 3);
+			for (GA_Offset ptoff : k0.range)
+				v0[groupIdx[p_h.get(ptoff)]] = v_h.get(ptoff);
+			B.segment(row, d) = phiTM * Eigen::Map<VecX>(v0.data()->data(), dof);
+			row += d;
+		}
 	}
 
 	// In-between constraints
@@ -622,35 +641,36 @@ int Wiggly::compute() {
 	}
 
 	// Boundary condition at t1
-	Keyframe& km = keyframes.back();
 	km.t = getNormalizedTime(km.frame);
-
-	for (int i = 0; i < d; i++)
+	if (isEndFull) 
 	{
-		scalar lambda = getLambda(i);
-		scalar delta = getDelta(lambda);
-
-		for (int j = 0; j < 4; j++)
+		for (int i = 0; i < d; i++)
 		{
-			int col = getCoeffIdx(keyframes.size() - 2, i, j);
-			A(row + i, col) = b(km.t, delta, lambda, j);
-			if (km.hasVel)
-				A(row + d + i, col) = bDot(km.t, delta, lambda, j);
+			scalar lambda = getLambda(i);
+			scalar delta = getDelta(lambda);
+
+			for (int j = 0; j < 4; j++)
+			{
+				int col = getCoeffIdx(keyframes.size() - 2, i, j);
+				A(row + i, col) = b(km.t, delta, lambda, j);
+				if (km.hasVel)
+					A(row + d + i, col) = bDot(km.t, delta, lambda, j);
+			}
 		}
-	}
 
-	Eigen::Map<VecX> um(km.u.data()->data(), dof);
+		Eigen::Map<VecX> um(km.u.data()->data(), dof);
 
-	B.segment(row, d) = phiTM * um + c;
-	row += d;
-	if (km.hasVel)
-	{
-		GA_ROHandleV3D v_h(km.detail, GA_ATTRIB_POINT, "v");
-		GA_ROHandleI p_h(km.detail, GA_ATTRIB_POINT, "original");
-		std::vector<UT_Vector3D> vm(dof/3);
-		for (GA_Offset ptoff : km.range)
-			vm[groupIdx[p_h.get(ptoff)]] = v_h.get(ptoff);
-		B.segment(row, d) = phiTM * Eigen::Map<VecX>(vm.data()->data(), dof);
+		B.segment(row, d) = phiTM * um + c;
+		row += d;
+		if (km.hasVel)
+		{
+			GA_ROHandleV3D v_h(km.detail, GA_ATTRIB_POINT, "v");
+			GA_ROHandleI p_h(km.detail, GA_ATTRIB_POINT, "original");
+			std::vector<UT_Vector3D> vm(dof / 3);
+			for (GA_Offset ptoff : km.range)
+				vm[groupIdx[p_h.get(ptoff)]] = v_h.get(ptoff);
+			B.segment(row, d) = phiTM * Eigen::Map<VecX>(vm.data()->data(), dof);
+		}
 	}
 
 #if DEBUG_AB
@@ -872,6 +892,7 @@ void Wiggly::preCompute() {
 
 	// Slice K and M to contain only the unconstrained nodes
 	std::vector<int> sliceIndices;
+
 	for (int i = 0; i < groupIdx.size(); i++)
 	{
 		if (groupIdx[i] < 0) continue;

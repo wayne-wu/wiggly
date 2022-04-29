@@ -68,7 +68,9 @@ namespace HDK_Wiggly {
 		int compute();
 		void preCompute();
 
-		VecX u(const float t);
+		VecX u(const float f);
+		VecX uDot(const float f);
+		
 		scalar totalEnergy(const VecX& c);
 		scalar integrand(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs);
 		int getNumPoints() { return mesh->getNumPoints(); }
@@ -121,6 +123,7 @@ namespace HDK_Wiggly {
 		inline bool shouldMultithread() { return parms.d > 1; }
 
 		int getNumCoeffs() { return 4 * (keyframes.size() - 1); }
+
 		/* Get the total number of DOF (i.e. x, y, z for every node)*/
 		int getDof() { return mDof; }
 		/* Get the total number of coefficients across all wiggly splines */

@@ -359,15 +359,21 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 		fpreal f = chman->getSample(cookparms.getCookTime());
 
 		VecX uPos = sopcache->wigglyObj->u(f);
+		VecX uVel = sopcache->wigglyObj->uDot(f);
+
+		GA_RWHandleV3D v_h(detail->addFloatTuple(GA_ATTRIB_POINT, "v", 3));
 
 		for(GA_Offset ptoff : ptRange)
 		{
-			UT_Vector3 p = detail->getPos3(ptoff);
-
 			int uIdx = 3 * groupIdx[detail->pointIndex(ptoff)];
-			p += UT_Vector3(uPos(uIdx), uPos(uIdx + 1), uPos(uIdx + 2));
 
-			detail->setPos3(ptoff, p);
+			detail->setPos3(
+				ptoff, 
+				detail->getPos3(ptoff) + UT_Vector3(uPos(uIdx), uPos(uIdx + 1), uPos(uIdx + 2)));
+
+			v_h.set(
+				ptoff, 
+				UT_Vector3D(uVel(uIdx), uVel(uIdx + 1), uVel(uIdx + 2)));
 		}
 
 		detail->getP()->bumpDataId();
