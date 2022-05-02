@@ -29,7 +29,7 @@ namespace HDK_Wiggly {
 		float t;
 		float frame;
 		GA_OffsetArray range;
-		std::vector<UT_Vector3D> u;
+		VecX u;
 		bool hasPos;
 		bool hasVel;
 		const GU_Detail* detail;
@@ -65,8 +65,8 @@ namespace HDK_Wiggly {
 			: mesh(mgdp), parms(sopparms) { }
 		~Wiggly() {}
 
-		int compute();
-		void preCompute();
+		int compute(UT_AutoInterrupt& progress);
+		void preCompute(const MatX& K_full, const MatX& M_full);
 
 		VecX u(const float f);
 		VecX uDot(const float f);
@@ -76,8 +76,24 @@ namespace HDK_Wiggly {
 		int getNumPoints() { return mesh->getNumPoints(); }
 		Keyframes& getKeyframes() { return keyframes; }
 		WigglyParms& getParms() { return parms; }
-		UT_AutoInterrupt& getProgress() { return *progress; }
+
+		int getConstraintIdx(const int ogIdx) { return groupIdx[ogIdx]; }
 		void setGroupIdx(const IndexMap& arr) { groupIdx = arr; }
+
+		bool isInFrameRange(const float f) { return startFrame <= f && endFrame >= f; }
+		void setFrameRange(const float start, const float end) { startFrame = start; endFrame = end; }
+		float getEndFrame() { return endFrame;  }
+
+		VecX& getUEnd() { return uEnd; }
+		VecX& getUDotEnd() { return uDotEnd; }
+
+		static void calculateMK_FEM(MatX& K, MatX& M, const GU_Detail* mesh, const scalar E, const scalar v, const scalar p);
+
+		// groupIdx will map from originalPtIdx to constrainedIdx
+		IndexMap groupIdx;
+
+		// A range of points that should be looped over
+		GA_Range ptRange;
 
 	protected:
 
@@ -132,18 +148,15 @@ namespace HDK_Wiggly {
 		/* Get the flattened idx of a coefficient */
 		inline int getCoeffIdx(const int k, const int d, const int l) { return k * 4 * parms.d + 4 * d + l; }
 
-		void calculateMK_FEM(MatX& K, MatX& M);
-		void calculateMK_Connectivity();
 
 		int mDof;
+
+		float startFrame;
+		float endFrame;
 
 		const GU_Detail* mesh;
 		Keyframes keyframes;
 		WigglyParms parms;
-
-		UT_UniquePtr<UT_AutoInterrupt> progress;
-
-		IndexMap groupIdx;
 
 		MatX M;
 		MatX K;
@@ -151,5 +164,10 @@ namespace HDK_Wiggly {
 		VecX eigenValues;   // getDof() x 1
 		MatX eigenModes;    // getDof() x getDof()
 		VecX coefficients;  // getDof() x 1
+
+		// Caching the end displacement and velocity for multiple splines
+		VecX uEnd;
+		VecX uDotEnd;
+
 	};
 }

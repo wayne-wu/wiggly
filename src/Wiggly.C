@@ -30,12 +30,12 @@ Functor for the energy objective function using dlib minimization
 */
 struct ObjFunctor
 {
-	ObjFunctor(Wiggly& obj, const MatX& U, const VecX& w0)
-		: wiggly(obj), U(U), w0(w0) {}
+	ObjFunctor(Wiggly& obj, UT_AutoInterrupt& progress, const MatX& U, const VecX& w0)
+		: wiggly(obj), mProgress(progress), U(U), w0(w0) {}
 
 	double operator()(const column_vector& v) const
 	{
-		if (wiggly.getProgress().wasInterrupted())
+		if (mProgress.wasInterrupted())
 			return 0.0;
 
 		Eigen::Map<const VecX> z(v.begin(), v.size());
@@ -46,6 +46,7 @@ struct ObjFunctor
 	Wiggly& wiggly;
 	const MatX& U;
 	const VecX& w0;
+	UT_AutoInterrupt& mProgress;
 };
 
 /*
@@ -425,15 +426,14 @@ void Wiggly::perKeyEnergyPartial(
 		}
 		m *= 0.25;
 
-		int uIdx = groupIdx[ogPt];
+		int uIdx = 3 * groupIdx[ogPt];
 
 		if (k.hasPos)
-			posDiff += m * k.u[uIdx].distance2(
-				UT_Vector3D(uPos(3 * uIdx), uPos(3 * uIdx + 1), uPos(3 * uIdx + 2)));
+			posDiff += m * (k.u.segment(uIdx, 3) - uPos.segment(uIdx, 3)).squaredNorm();
 
 		if (k.hasVel)
 			velDiff += m * v_h.get(ptOff).distance2(
-				UT_Vector3D(uVel(3 * uIdx), uVel(3 * uIdx + 1), uVel(3 * uIdx + 2)));
+				UT_Vector3D(uVel(uIdx), uVel(uIdx + 1), uVel(uIdx + 2)));
 	}
 
 	{
@@ -525,11 +525,7 @@ void Wiggly::dynamicsEnergyPartial(scalar& total, const VecX& coeffs, const UT_J
 Compute the wiggly splines' coefficients based on the sparse keyframes.
 This should be recomputed when the mesh changes or the keyframes change.
 */
-int Wiggly::compute() {
-
-	progress = UTmakeUnique<UT_AutoInterrupt>("Assembling condition matrix.");
-	if (progress->wasInterrupted())
-		return 0;
+int Wiggly::compute(UT_AutoInterrupt& progress) {
 
 	int dof = getDof();
 	int d = parms.d;
@@ -583,9 +579,7 @@ int Wiggly::compute() {
 			}
 		}
 
-		Eigen::Map<VecX> u0(k0.u.data()->data(), dof);
-
-		B.segment(row, d) = phiTM * u0 + c;
+		B.segment(row, d) = phiTM * k0.u + c;
 		row += d;
 
 		if (k0.hasVel)
@@ -658,9 +652,7 @@ int Wiggly::compute() {
 			}
 		}
 
-		Eigen::Map<VecX> um(km.u.data()->data(), dof);
-
-		B.segment(row, d) = phiTM * um + c;
+		B.segment(row, d) = phiTM * km.u + c;
 		row += d;
 		if (km.hasVel)
 		{
@@ -683,7 +675,7 @@ int Wiggly::compute() {
 	std::cout << B << std::endl;
 #endif
 
-	if (progress->wasInterrupted())
+	if (progress.wasInterrupted())
 		return 0;
 
 	int subspaceDim = numCoeffs - numConditions;
@@ -695,112 +687,102 @@ int Wiggly::compute() {
 		std::cout << "Det(A) = " << A.determinant() << std::endl;
 #endif
 		coefficients = A.colPivHouseholderQr().solve(B);
-		progress.reset();
-		return 0;
+	}
+	else
+	{
+		// NOTE: BDCSVD preferred for larger matrix
+		Eigen::BDCSVD<MatX> svd = A.bdcSvd(Eigen::ComputeFullU | Eigen::ComputeFullV);
+
+		if (svd.info() > 0)
+			return 1;
+
+		MatX U = svd.matrixV()(Eigen::all, Eigen::seq(numCoeffs - subspaceDim, Eigen::last));
+
+		VecX w0 = svd.solve(B);
+
+		if (progress.wasInterrupted())
+			return 0;
+
+		column_vector z;
+		z.set_size(subspaceDim);
+		z = 0.0;  // TODO: What should the starting value be?
+
+		ObjFunctor objective(*this, progress, U, w0);
+
+		dlib::find_min_using_approximate_derivatives(
+			dlib::bfgs_search_strategy(),
+			dlib::objective_delta_stop_strategy(parms.eps),
+			objective, z, -1);
+
+		Eigen::Map<const VecX> z_opt(z.begin(), z.size());
+
+		coefficients = w0 + U * z_opt;
 	}
 
-	// NOTE: BDCSVD preferred for larger matrix
-	Eigen::BDCSVD<MatX> svd = A.bdcSvd(Eigen::ComputeFullU | Eigen::ComputeFullV);
-
-	if (svd.info() > 0)
-		return 1;
-
-	MatX U = svd.matrixV()(Eigen::all, Eigen::seq(numCoeffs - subspaceDim, Eigen::last));
-
-	VecX w0 = svd.solve(B);
-
-	progress.reset();
-	progress = UTmakeUnique<UT_AutoInterrupt>("Running Optimization");
-	if (progress->wasInterrupted())
-		return 0;
-
-	column_vector z;
-	z.set_size(subspaceDim);
-	z = 0.0;  // TODO: What should the starting value be?
-
-	ObjFunctor objective(*this, U, w0);
-
-	dlib::find_min_using_approximate_derivatives(
-		dlib::bfgs_search_strategy(),
-		dlib::objective_delta_stop_strategy(parms.eps),
-		objective, z, -1);
-
-	Eigen::Map<const VecX> z_opt(z.begin(), z.size());
-
-	coefficients = w0 + U * z_opt;  
-
-	progress.reset();
+	uEnd = u(endFrame);
+	uDotEnd = uDot(endFrame);
 
 	return 0;
 }
 
 /*
-Build the mass and stiffness matrix based connectivity.
-All mass and stiffness are assumed to be constant.
+Compute eigenvalues and eigenvectors based on stiffness and mass matrices
+as part of the precompute step. This only needs to be recomputed if the mesh changes.
 */
-void Wiggly::calculateMK_Connectivity() 
-{
-	const scalar m = 1.0;
-	const scalar k = 50.0;
+void Wiggly::preCompute(const MatX& K_full, const MatX& M_full) {
 
-	M.diagonal().setConstant(m);
+	// Slice K and M to contain only the unconstrained nodes
+	std::vector<int> sliceIndices;
 
-	UT_Set<int> visitedEdges;
-
-	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
+	for (int i = 0; i < groupIdx.size(); i++)
 	{
-		if (progress->wasInterrupted())
-			return;
-
-		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
-
-		for (int i = 0; i < 6; i++)
-		{
-			int i0; int i1;
-			tet->getEdgeIndices(i, i0, i1);
-
-			const GA_Index pt1idx = tet->getPointIndex(i0);
-			const GA_Index pt2idx = tet->getPointIndex(i1);
-
-			if (!visitedEdges.insert(
-				pt1idx < pt2idx ? CANTOR(pt1idx, pt2idx) : CANTOR(pt2idx, pt1idx)).second)
-				continue;
-
-			int p1x = 3 * pt1idx + 0;
-			int p1y = 3 * pt1idx + 1;
-			int p1z = 3 * pt1idx + 2;
-
-			int p2x = 3 * pt2idx + 0;
-			int p2y = 3 * pt2idx + 1;
-			int p2z = 3 * pt2idx + 2;
-
-			K(p1x, p1x) -= k;
-			K(p1y, p1y) -= k;
-			K(p1z, p1z) -= k;
-
-			K(p2x, p2x) -= k;
-			K(p2y, p2y) -= k;
-			K(p2z, p2z) -= k;
-
-			K(p1x, p2x) += k;
-			K(p2x, p1x) += k;
-
-			K(p1y, p2y) += k;
-			K(p2y, p1y) += k;
-			
-			K(p1z, p2z) += k;
-			K(p2z, p1z) += k;
-		}
+		if (groupIdx[i] < 0) continue;
+		sliceIndices.push_back(3 * i + 0);
+		sliceIndices.push_back(3 * i + 1);
+		sliceIndices.push_back(3 * i + 2);
 	}
+
+	mDof = sliceIndices.size();
+
+	parms.d = std::min(mDof, parms.d);
+
+	K = K_full(sliceIndices, sliceIndices);
+	M = M_full(sliceIndices, sliceIndices);
+
+
+#if DEBUG_MK
+	Eigen::IOFormat CommaInitFmt(
+		Eigen::StreamPrecision,
+		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
+	std::cout << K << std::endl;
+	std::cout << M << std::endl;
+#endif
+
+	// Find eigenvalues and eigenvectors
+	// NOTE: Using self adjoint because K is symmetric and M is positive definite
+	// Self adjoint is much faster and more accurate
+	Eigen::GeneralizedSelfAdjointEigenSolver<MatX> ges;
+	ges.compute(K, M);
+
+	// NOTE: Eigen values should be from smallest to largest
+	eigenValues = ges.eigenvalues().real();
+	eigenModes = ges.eigenvectors().real();
+
 }
 
-void Wiggly::calculateMK_FEM(MatX& K, MatX& M)
+void Wiggly::calculateMK_FEM(MatX& K, MatX& M, const GU_Detail* mesh, const scalar E, const scalar v, const scalar p)
 {
+	/*
+	Compute the global stiffness matrix of the tetrahedral mesh.
+	Adopted from 11.2 in Finite Element Method in Engineering (6th Edition)
+	*/
+	/*
+	Compute the global mass matrix of the tetrahedral mesh.
+	Adopted from 12.2.8 in Finite Element Method in Engineering (6th Edition)
+	*/
+
 	for (GA_Iterator it(mesh->getPrimitiveRange()); !it.atEnd(); ++it)
 	{
-		if (progress->wasInterrupted())
-			return;
-
 		const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(*it);
 
 		int subrows[12];
@@ -843,8 +825,6 @@ void Wiggly::calculateMK_FEM(MatX& K, MatX& M)
 		B *= 1.0 / (6.0 * V);
 
 		MatX D = MatX::Zero(6, 6);
-		scalar v = parms.poisson;
-		scalar E = parms.young;
 
 		D.block(0, 0, 3, 3).setConstant(v);
 		D(0, 0) = D(1, 1) = D(2, 2) = (1 - v);
@@ -860,77 +840,8 @@ void Wiggly::calculateMK_FEM(MatX& K, MatX& M)
 			subM.diagonal(i).setConstant(1);
 			subM.diagonal(-i).setConstant(1);
 		}
-		subM *= parms.p * V / 20.0;
+		subM *= p * V / 20.0;
 
 		M(subrows, subrows) += subM;
 	}
-}
-
-/*
-Compute eigenvalues and eigenvectors based on stiffness and mass matrices
-as part of the precompute step. This only needs to be recomputed if the mesh changes.
-*/
-void Wiggly::preCompute() {
-
-  progress = UTmakeUnique<UT_AutoInterrupt>("Assembling stiffness and mass matrices.");
-	
-	int dof = 3 * getNumPoints();
-
-	/*
-	Compute the global stiffness matrix of the tetrahedral mesh.
-	Adopted from 11.2 in Finite Element Method in Engineering (6th Edition)
-	*/
-	MatX K_tmp = MatX::Zero(dof, dof);
-
-	/*
-	Compute the global mass matrix of the tetrahedral mesh.
-	Adopted from 12.2.8 in Finite Element Method in Engineering (6th Edition)
-	*/
-	MatX M_tmp = MatX::Zero(dof, dof);
-
-	calculateMK_FEM(K_tmp, M_tmp);
-
-	// Slice K and M to contain only the unconstrained nodes
-	std::vector<int> sliceIndices;
-
-	for (int i = 0; i < groupIdx.size(); i++)
-	{
-		if (groupIdx[i] < 0) continue;
-		sliceIndices.push_back(3 * i + 0);
-		sliceIndices.push_back(3 * i + 1);
-		sliceIndices.push_back(3 * i + 2);
-	}
-
-	mDof = sliceIndices.size();
-
-	parms.d = std::min(mDof, parms.d);
-
-	K = K_tmp(sliceIndices, sliceIndices);
-	M = M_tmp(sliceIndices, sliceIndices);
-
-
-#if DEBUG_MK
-	Eigen::IOFormat CommaInitFmt(
-		Eigen::StreamPrecision,
-		Eigen::DontAlignCols, ", ", ", ", "", "", " << ", ";");
-	std::cout << K << std::endl;
-	std::cout << M << std::endl;
-#endif
-
-	progress.reset();
-	progress = UTmakeUnique<UT_AutoInterrupt>("Finding eigenvalues and eigen vectors.");
-	if (progress->wasInterrupted())
-		return;
-
-	// Find eigenvalues and eigenvectors
-	// NOTE: Using self adjoint because K is symmetric and M is positive definite
-	// Self adjoint is much faster and more accurate
-	Eigen::GeneralizedSelfAdjointEigenSolver<MatX> ges;
-	ges.compute(K, M);
-
-	// NOTE: Eigen values should be from smallest to largest
-	eigenValues = ges.eigenvalues().real();
-	eigenModes = ges.eigenvectors().real();
-
-	progress.reset();
 }

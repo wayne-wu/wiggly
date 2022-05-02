@@ -17,6 +17,7 @@
 #include <memory>
 #include <algorithm>
 #include <limits.h>
+#include <string>
 
 #include "Eigen/Dense"
 
@@ -78,16 +79,6 @@ static const char* theDsFile = R"THEDSFILE(
 						name		"compute"
 						label		"Compute Settings"
 						parm {
-			        name    "pingroup"
-			        cppname "PinGroup"
-			        label   "Pin Constraint Group"
-			        type    string
-			        default { "" }
-			        parmtag { "script_action" "import soputils\nkwargs['geometrytype'] = (hou.geometryType.Points,)\nkwargs['inputindex'] = 0\nsoputils.selectGroupParm(kwargs)" }
-			        parmtag { "script_action_help" "Select geometry from an available viewport.\nShift-click to turn on Select Groups." }
-			        parmtag { "script_action_icon" "BUTTONS_reselect" }
-				    }
-						parm {
 								name    "alpha"
 								label   "Mass Damping"
 								type    float
@@ -112,7 +103,7 @@ static const char* theDsFile = R"THEDSFILE(
 								name    "modesnum"
 								label   "Number of Modes"
 								type    integer
-								default { "20" }
+								default { "30" }
 								range   { 10 50 }
 						}
 						parm {
@@ -150,6 +141,8 @@ SOP_Wiggly::buildTemplates()
 	return templ.templates();
 }
 
+typedef UT_SharedPtr<Wiggly> WigglyPtr;
+
 class SOP_WigglyCache : public SOP_NodeCache
 {
 public:
@@ -165,8 +158,12 @@ public:
 	exint metaCacheCount1;
 	exint metaCacheCound2;
 
-	UT_UniquePtr<Wiggly> wigglyObj;
-	SOP_WigglyParms wigglyParms;
+	std::vector<WigglyPtr> wigglies;
+
+	MatX K;
+	MatX M;
+
+	SOP_WigglyParms parms;
 };
 
 class SOP_WigglyVerb : public SOP_NodeVerb
@@ -202,46 +199,33 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 		const SOP_WigglyParms& sopparms = cookparms.parms<SOP_WigglyParms>();
 		auto sopcache = (SOP_WigglyCache*)cookparms.cache();
 		
-		GU_Detail* detail = cookparms.gdh().gdpNC();    // rest geometry to be modified
-		const GU_Detail* bgdp = cookparms.inputGeo(1);  // constraints
+		GU_Detail* detail = cookparms.gdh().gdpNC();    // a copy of input geometry to be modified
+		const GU_Detail* ogdp = cookparms.inputGeo(0);  // input rest geometry
+		const GU_Detail* agdp = cookparms.inputGeo(1);  // wiggly splines
 
-		if (bgdp->getNumPrimitives() < 2)
+		if (detail->getNumPoints() == 0)
 		{
-			cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Need at least two constraints.");
+			cookparms.sopAddError(SOP_MESSAGE, "Empty rest geometry.");
 			return;
 		}
 
-		GOP_Manager groupManager;
-		GA_Range ptRange = detail->getPointRange();
-
-		const UT_StringHolder& groupPattern = sopparms.getPinGroup();
-		if (groupPattern.isstring())
+		if (agdp->getNumPrimitives() == 0)
 		{
-			const GA_PointGroup* pinGroup = groupManager.parsePointGroups(
-				groupPattern, GOP_Manager::GroupCreator(detail));
-			ptRange = GA_Range(*pinGroup, true);
-		}
-
-		// groupIdx will map from originalPtIdx to constrainedIdx
-		IndexMap groupIdx = IndexMap(detail->getNumPoints(), -1);
-		UT_Set<GA_Index> unconstrainedPts;
-
-		int n = 0;
-		for (GA_Offset ptOff : ptRange) {
-			GA_Index ptIdx = detail->pointIndex(ptOff);
-			groupIdx[ptIdx] = n++;
-			unconstrainedPts.insert(ptIdx);
+			cookparms.sopAddError(SOP_MESSAGE, "No spline specified.");
+			return;
 		}
 
 		bool preComputeNeeded = true;
 		bool computeNeeded = false;
 
-		if (sopcache->wigglyObj)
+		if (sopcache->wigglies.size() > 0)
 			if (sopcache->prevInput1Id == detail->getUniqueId() &&
 				sopcache->primitiveListDataId1 == detail->getPrimitiveList().getDataId() &&
 				sopcache->topologyDataId1 == detail->getTopology().getDataId())
-				if (sopcache->wigglyParms == sopparms)
+				if (sopcache->parms == sopparms)
 					preComputeNeeded = false;
+
+		sopcache->parms = sopparms;  // TODO: Check if individual parameters have changed
 
 		if (preComputeNeeded)
 		{
@@ -250,8 +234,28 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			// If the mesh has changed then we need to recompute everything
 			computeNeeded = true;
 
-			// Clear cache data
-			sopcache->wigglyObj.reset();
+			int dof = 3 * detail->getNumPoints();
+
+			sopcache->K = MatX::Zero(dof, dof);
+			sopcache->M = MatX::Zero(dof, dof);
+
+			Wiggly::calculateMK_FEM(
+				sopcache->K, sopcache->M, detail,
+				sopparms.getYoung(), sopparms.getPoisson(), sopparms.getMassdensity());
+
+			sopcache->prevInput1Id = detail->getUniqueId();
+			sopcache->primitiveListDataId1 = detail->getPrimitiveList().getDataId();
+			sopcache->topologyDataId1 = detail->getTopology().getDataId();
+			sopcache->metaCacheCount1 = detail->getMetaCacheCount();
+
+		}
+		else if (sopcache->prevInput2Id != agdp->getUniqueId() ||
+			sopcache->primitiveListDataId2 != agdp->getPrimitiveList().getDataId() ||
+			sopcache->topologyDataId2 != agdp->getTopology().getDataId())
+			computeNeeded = true;
+
+		if (computeNeeded)
+		{
 
 			WigglyParms parms;
 			parms.alpha = sopparms.getAlpha();
@@ -260,120 +264,243 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			parms.g = sopparms.getGconstant();
 			parms.young = sopparms.getYoung();
 			parms.eps = sopparms.getEpsilon();
-			parms.p = sopparms.getMassdensity();
+			parms.p = sopparms.getMassdensity(); 
 			parms.poisson = sopparms.getPoisson();
 			parms.physical = sopparms.getPhysical();
 
-			sopcache->wigglyObj = std::make_unique<Wiggly>(detail, parms);
-			sopcache->wigglyObj->setGroupIdx(groupIdx);
-			sopcache->wigglyObj->preCompute();
+			GOP_Manager groupManager;
 
-			// TODO: Find a better way to store the parameters.
-			// Maybe we can pass the sopparms object directly to wiggly
-			sopcache->wigglyParms = sopparms;
+			GA_RWHandleV3D v_h(detail->addFloatTuple(GA_ATTRIB_POINT, "v", 3));
+			GA_RWHandleI og_h(detail->addIntTuple(GA_ATTRIB_POINT, "original", 1));
 
-			sopcache->prevInput1Id = detail->getUniqueId();
-			sopcache->primitiveListDataId1 = detail->getPrimitiveList().getDataId();
-			sopcache->topologyDataId1 = detail->getTopology().getDataId();
-			sopcache->metaCacheCount1 = detail->getMetaCacheCount();
-		}
-		else if (sopcache->prevInput2Id != bgdp->getUniqueId() ||
-			sopcache->primitiveListDataId2 != bgdp->getPrimitiveList().getDataId() ||
-			sopcache->topologyDataId2 != bgdp->getTopology().getDataId())
-			computeNeeded = true;
+			GA_ROHandleF start_h(agdp, GA_ATTRIB_PRIMITIVE, "start");
+			GA_ROHandleS group_h(agdp, GA_ATTRIB_PRIMITIVE, "group");
 
-		if (computeNeeded)
-		{
-			// GET THE KEYFRAMES DATA FROM SECOND INPUT
+			WigglyPtr lastWiggly = nullptr;  // last wiggly spline
 
-			GA_ROHandleI f_h(bgdp, GA_ATTRIB_POINT, "frame");
+			sopcache->wigglies.clear();
 
-			Keyframes& keyframes = sopcache->wigglyObj->getKeyframes();
-			keyframes.clear();
+			int splineNum = 1;
 
-			for (GA_Iterator it(bgdp->getPrimitiveRange()); !it.atEnd(); ++it)
+			// LOOP THROUGH EACH SPLINE
+			for (GA_Iterator splineIt(agdp->getPrimitiveRange()); !splineIt.atEnd(); ++splineIt)
 			{
-				Keyframe keyframe;
-				keyframe.frame = f_h.get(*it);
-
-				const GU_PrimPacked* packedPrim = (const GU_PrimPacked*)bgdp->getPrimitive(*it);
-				if (packedPrim == nullptr)
+				const GU_PrimPacked* packedSpline = (const GU_PrimPacked*)agdp->getPrimitive(*splineIt);
+				if (packedSpline == nullptr)
 				{
-					cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Invalid constraints. Use Wiggly Constraint SOP.");
+					cookparms.sopAddError(SOP_MESSAGE, "Invalid spline. Use Wiggly Spline SOP.");
+					return;
+				}
+				
+				const GU_Detail* bgdp = packedSpline->getPackedDetail().gdp();
+				if (bgdp->getNumPrimitives() < 2)
+				{
+					cookparms.sopAddError(SOP_MESSAGE, "Need at least two constraints.");
 					return;
 				}
 
-				const GU_Detail* packedDetail = packedPrim->getPackedDetail().gdp();
+				std::string splineName = "Spline " + std::to_string(splineNum++);
 
-				keyframe.hasPos = true;
-				keyframe.hasVel = packedDetail->findAttribute(GA_ATTRIB_POINT, "v") != nullptr;
-
-				GA_ROHandleI pt_h(packedDetail, GA_ATTRIB_POINT, "original");
-
-				keyframe.u = std::vector<UT_Vector3D>(n);
-
-				GA_Offset ptoff;
-				GA_FOR_ALL_PTOFF(packedDetail, ptoff)
+				if (lastWiggly != nullptr)
 				{
-					// Store all the keyframes
-					int ogPt = pt_h.get(ptoff);
+					// NOTE: Move the geometry to the last frame of the last spline
+					// This is to ensure that the calculation of the current spline 
+					// is adjusted to account for the last spline
 
-					// If the point is constrained, we do not store it
-					if (unconstrainedPts.find(ogPt) == unconstrainedPts.end())
-						continue;
+					VecX& uPos = lastWiggly->getUEnd();
+					VecX& uVel = lastWiggly->getUDotEnd();
 
-					keyframe.range.append(ptoff);
-					keyframe.u[groupIdx[ogPt]] = packedDetail->getPos3(ptoff) - detail->getPos3(detail->pointOffset(ogPt));
+					GA_Offset ptoff;
+					GA_FOR_ALL_PTOFF(detail, ptoff)
+					{
+						// We are essentially adding all the necessary attributes to 
+						// make detail a Wiggly Constraint.
+
+						int ogPt = detail->pointIndex(ptoff);
+						og_h.set(ptoff, ogPt);
+
+						int uIdx = 3 * lastWiggly->groupIdx[ogPt];
+
+						if (uIdx < 0) continue;
+
+						detail->setPos3(ptoff, detail->getPos3(ptoff) +
+							UT_Vector3(uPos(uIdx), uPos(uIdx + 1), uPos(uIdx + 2)));
+
+						v_h.set(ptoff, UT_Vector3D(uVel(uIdx), uVel(uIdx + 1), uVel(uIdx + 2)));
+					}
 				}
 
-				keyframe.detail = packedDetail;
+				WigglyPtr wiggly = UTmakeShared<Wiggly>(detail, parms);
 
-				// NOTE: Assuming there's no duplicate right now
-				keyframes.push_back(keyframe);
+				wiggly->ptRange = detail->getPointRange();
+
+				// Find pinned group
+				const UT_StringHolder& groupPattern = group_h.get(*splineIt);
+				if (groupPattern.isstring())
+				{
+					const GA_PointGroup* pinGroup = groupManager.parsePointGroups(
+						groupPattern, GOP_Manager::GroupCreator(detail));
+					wiggly->ptRange = GA_Range(*pinGroup, /*invert*/ true);
+				}
+
+				IndexMap groupIdx = IndexMap(detail->getNumPoints(), -1);
+				UT_Set<GA_Index> unconstrainedPts;
+
+				int n = 0;
+				for (GA_Offset ptOff : wiggly->ptRange) {
+					GA_Index ptIdx = detail->pointIndex(ptOff);
+					groupIdx[ptIdx] = n++;
+					unconstrainedPts.insert(ptIdx);
+				}
+
+				{
+					std::string message = splineName + " - Computing eigen modes and eigen values.";
+					UT_AutoInterrupt progress(message.c_str());
+					if (progress.wasInterrupted())
+						return;
+
+					wiggly->setGroupIdx(groupIdx);
+					wiggly->preCompute(sopcache->K, sopcache->M);
+
+					if (progress.wasInterrupted())
+						return;
+				}
+
+				GA_ROHandleI f_h(bgdp, GA_ATTRIB_POINT, "frame");
+
+				Keyframes& keyframes = wiggly->getKeyframes();
+				keyframes.clear();
+
+				// LOOP THROUGH EACH CONSTRAINT
+				for (GA_Iterator it(bgdp->getPrimitiveRange()); !it.atEnd(); ++it)
+				{
+					Keyframe keyframe;
+					keyframe.frame = f_h.get(*it);
+
+					const GU_PrimPacked* packedConstraint = (const GU_PrimPacked*)bgdp->getPrimitive(*it);
+					if (packedConstraint == nullptr)
+					{
+						cookparms.sopAddError(SOP_ERR_INVALID_SRC, "Invalid constraint. Use Wiggly Constraint SOP.");
+						return;
+					}
+
+					// NOTE: If it's the first spline, we use the first keyframe as specified, 
+					// otherwise we will use the geometry with the last spline's data applied as the constraint
+					// TODO: Does that mean u for the first keyframe will always be 0?
+					const GU_Detail* packedDetail = keyframe.frame == start_h.get(*splineIt) && lastWiggly != nullptr ?
+						detail : packedConstraint->getPackedDetail().gdp();
+
+					keyframe.hasPos = true;
+					keyframe.hasVel = packedDetail->findAttribute(GA_ATTRIB_POINT, "v") != nullptr;
+
+					GA_ROHandleI pt_h(packedDetail, GA_ATTRIB_POINT, "original");
+
+					keyframe.u = VecX::Zero(3 * unconstrainedPts.size());
+
+					GA_Offset ptoff;
+					GA_FOR_ALL_PTOFF(packedDetail, ptoff)
+					{
+						// Store all the keyframes
+						int ogPt = pt_h.get(ptoff);
+
+						// If the point is constrained, we do not store it
+						if (unconstrainedPts.find(ogPt) == unconstrainedPts.end())
+							continue;
+
+						keyframe.range.append(ptoff);
+						int uIdx = 3 * groupIdx[ogPt];
+						UT_Vector3 u = packedDetail->getPos3(ptoff) - detail->getPos3(detail->pointOffset(ogPt));
+						keyframe.u(uIdx) = u.x();
+						keyframe.u(uIdx + 1) = u.y();
+						keyframe.u(uIdx + 2) = u.z();
+					}
+
+					keyframe.detail = packedDetail;
+
+					// NOTE: Assuming there's no duplicate right now
+					keyframes.push_back(keyframe);
+				}
+
+				std::sort(keyframes.begin(), keyframes.end());
+
+				// Validate keyframes
+				if (!keyframes.front().hasVel || !keyframes.back().hasVel)
+				{
+					cookparms.sopAddError(SOP_MESSAGE, "Start and end keyframes must have velocity.");
+					return;
+				}
+
+				wiggly->setFrameRange(keyframes.front().frame, keyframes.back().frame);
+
+				{
+					std::string message = splineName + " - Computing wiggly spline coefficients.";
+					UT_AutoInterrupt progress(message.c_str());
+					if (progress.wasInterrupted())
+						return;
+
+					int err = wiggly->compute(progress);
+					if (err > 0)
+					{
+						cookparms.sopAddError(SOP_MESSAGE, "Wiggly computation failed. Check your parameters.");
+						return;
+					}
+				}
+
+				sopcache->wigglies.push_back(wiggly);
+
+				lastWiggly = wiggly;
 			}
 
-			std::sort(keyframes.begin(), keyframes.end());
-
-			// Validate keyframes
-			if (!keyframes.front().hasVel || !keyframes.back().hasVel)
-			{
-				cookparms.sopAddError(SOP_MESSAGE, "Start and end keyframes must have velocity.");
-				return;
-			}
-
-			int err = sopcache->wigglyObj->compute();
-			if (err > 0)
-			{
-				cookparms.sopAddError(SOP_MESSAGE, "Computation failed. Check your parameters.");
-				return;
-			}
-
-			sopcache->prevInput2Id = bgdp->getUniqueId();
-			sopcache->primitiveListDataId2 = bgdp->getPrimitiveList().getDataId();
-			sopcache->topologyDataId2 = bgdp->getTopology().getDataId();
-			sopcache->metaCacheCound2 = bgdp->getMetaCacheCount();
+			sopcache->prevInput2Id = agdp->getUniqueId();
+			sopcache->primitiveListDataId2 = agdp->getPrimitiveList().getDataId();
+			sopcache->topologyDataId2 = agdp->getTopology().getDataId();
+			sopcache->metaCacheCound2 = agdp->getMetaCacheCount();
 		}
 
 		// Loop through all points and modify the value
 		CH_Manager* chman = OPgetDirector()->getChannelManager();
 		fpreal f = chman->getSample(cookparms.getCookTime());
 
-		VecX uPos = sopcache->wigglyObj->u(f);
-		VecX uVel = sopcache->wigglyObj->uDot(f);
+		// Find the current wiggly spline
+		int idx = -1;
 
-		GA_RWHandleV3D v_h(detail->addFloatTuple(GA_ATTRIB_POINT, "v", 3));
+		for (int i = 0; i < sopcache->wigglies.size(); ++i)
+			if (sopcache->wigglies[i]->isInFrameRange(f))
+			{
+				idx = i;
+				break;
+			}
 
-		for(GA_Offset ptoff : ptRange)
+		if (idx < 0)
 		{
-			int uIdx = 3 * groupIdx[detail->pointIndex(ptoff)];
+			cookparms.sopAddWarning(SOP_MESSAGE, "No wiggly spline found for the current frame.");
+			return;
+		}
 
-			detail->setPos3(
-				ptoff, 
-				detail->getPos3(ptoff) + UT_Vector3(uPos(uIdx), uPos(uIdx + 1), uPos(uIdx + 2)));
+		Wiggly& wiggly = *sopcache->wigglies[idx];
 
-			v_h.set(
-				ptoff, 
-				UT_Vector3D(uVel(uIdx), uVel(uIdx + 1), uVel(uIdx + 2)));
+		VecX uPos = wiggly.u(f);
+
+		GA_Offset ptoff;
+		GA_FOR_ALL_PTOFF(detail, ptoff)
+		{
+			int ogPt = detail->pointIndex(ptoff);
+
+			UT_Vector3 u(0,0,0);
+
+			// Apply displacement from all the previous splines
+			for (int i = 0; i <= idx; ++i)
+			{
+				VecX& lastPos = i == idx ? uPos : sopcache->wigglies[i]->getUEnd();
+
+				int uIdx = 3 * sopcache->wigglies[i]->groupIdx[ogPt];
+
+				if (uIdx < 0) continue;
+
+				u += UT_Vector3(lastPos(uIdx), lastPos(uIdx + 1), lastPos(uIdx + 2));
+			}
+
+			detail->setPos3(ptoff, ogdp->getPos3(ptoff) + u);
 		}
 
 		detail->getP()->bumpDataId();
