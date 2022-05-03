@@ -46,14 +46,11 @@ namespace HDK_Wiggly {
 	{
 		scalar alpha;
 		scalar beta;
-		UT_Vector3D g;
+		scalar g = 0.0;
 		int d = 20;
 		scalar cA = 100.0;
 		scalar cB = 100.0;
-		scalar p = 1000;
-		scalar young;
 		scalar eps = 1e-6;
-		scalar poisson;
 		scalar physical;
 	};
 
@@ -130,7 +127,7 @@ namespace HDK_Wiggly {
 		float getNormalizedTime(const float frame);
 
 		/* Get the c constant */
-		inline scalar getC(const int& d, const scalar& lambda) { return abs(lambda) > parms.eps ? parms.g[d%3] / abs(lambda) : 0.0; }
+		inline scalar getC(const int& d, const scalar& lambda) { return abs(lambda) > parms.eps ? parms.g / abs(lambda) : 0.0; }
 		/* Get the damping constant */
 		inline scalar getDelta(const scalar& lambda) { return 0.5 * (parms.alpha + parms.beta * lambda); }
 		/* Get the lambda constant */

@@ -107,15 +107,8 @@ static const char* theDsFile = R"THEDSFILE(
 								range   { 10 50 }
 						}
 						parm {
-								name    "gconstant"
-								label   "G Constant"
-								type    vector
-							  size		3
-								default { "0" "0" "0" }
-						}
-						parm {
 								name    "epsilon"
-								label   "Epsilon"
+								label   "Error Tolerance"
 								type    float
 								default { "1e-7" }
 								range   { 1e-12 1e-3 }
@@ -126,7 +119,7 @@ static const char* theDsFile = R"THEDSFILE(
 						label		"Visualization"
 						parm {
 								name    "guidegeo"
-								label   "Show Guide Geometry"
+								label   "Show Constraints"
 								type    toggle
 								default { "1" }    
 					  }
@@ -222,15 +215,13 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			if (sopcache->prevInput1Id == detail->getUniqueId() &&
 				sopcache->primitiveListDataId1 == detail->getPrimitiveList().getDataId() &&
 				sopcache->topologyDataId1 == detail->getTopology().getDataId())
-				if (sopcache->parms == sopparms)
+				if (sopcache->parms.getPoisson() == sopparms.getPoisson() &&
+					sopcache->parms.getYoung() == sopparms.getYoung() &&
+					sopcache->parms.getMassdensity() == sopparms.getMassdensity())
 					preComputeNeeded = false;
-
-		sopcache->parms = sopparms;  // TODO: Check if individual parameters have changed
 
 		if (preComputeNeeded)
 		{
-			// TODO: Check if the parameter has changed too
-
 			// If the mesh has changed then we need to recompute everything
 			computeNeeded = true;
 
@@ -247,25 +238,25 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 			sopcache->primitiveListDataId1 = detail->getPrimitiveList().getDataId();
 			sopcache->topologyDataId1 = detail->getTopology().getDataId();
 			sopcache->metaCacheCount1 = detail->getMetaCacheCount();
-
 		}
 		else if (sopcache->prevInput2Id != agdp->getUniqueId() ||
 			sopcache->primitiveListDataId2 != agdp->getPrimitiveList().getDataId() ||
-			sopcache->topologyDataId2 != agdp->getTopology().getDataId())
+			sopcache->topologyDataId2 != agdp->getTopology().getDataId() ||
+			sopcache->parms.getAlpha() != sopparms.getAlpha() ||
+			sopcache->parms.getBeta() != sopparms.getBeta() ||
+			sopcache->parms.getPhysical() != sopparms.getPhysical() ||
+			sopcache->parms.getModesnum() != sopparms.getModesnum())
 			computeNeeded = true;
+
+		sopcache->parms = sopparms;
 
 		if (computeNeeded)
 		{
-
 			WigglyParms parms;
 			parms.alpha = sopparms.getAlpha();
 			parms.beta = sopparms.getBeta();
 			parms.d = std::min(sopparms.getModesnum(), detail->getNumPoints() * 3);
-			parms.g = sopparms.getGconstant();
-			parms.young = sopparms.getYoung();
 			parms.eps = sopparms.getEpsilon();
-			parms.p = sopparms.getMassdensity(); 
-			parms.poisson = sopparms.getPoisson();
 			parms.physical = sopparms.getPhysical();
 
 			GOP_Manager groupManager;

@@ -408,6 +408,8 @@ void Wiggly::perKeyEnergyPartial(
 {
 	int i, n;
 
+	GA_LocalIntrinsic vol_h = mesh->getPrimitive(0)->findIntrinsic("measuredvolume");
+
 	scalar posDiff = 0, velDiff = 0;
 	for (info.divideWork(k.range.size(), i, n); i < n; i++)
 	{
@@ -422,7 +424,9 @@ void Wiggly::perKeyEnergyPartial(
 		for (GA_Offset pOff : primitives)
 		{
 			const GU_PrimTetrahedron* tet = (const GU_PrimTetrahedron*)mesh->getPrimitive(pOff);
-			m += tet->calcVolume(UT_Vector3(0, 0, 0));
+			scalar volume;
+			tet->getIntrinsic(vol_h, volume);
+			m += volume;
 		}
 		m *= 0.25;
 
@@ -470,9 +474,9 @@ The integrand for the energy minimizing integrand
 */
 scalar Wiggly::integrand(const float t, const int d, const scalar delta, const scalar lambda, const VecX& coeffs)
 {
-	scalar tmp = wigglyDDot(t, d, delta, lambda, coeffs) + 
-		2 * delta * wigglyDot(t, d, delta, lambda, coeffs) + 
-		lambda * wiggly(t, d, delta, lambda, coeffs) + parms.g[d%3];
+	scalar tmp = wigglyDDot(t, d, delta, lambda, coeffs) +
+		2 * delta * wigglyDot(t, d, delta, lambda, coeffs) +
+		lambda * wiggly(t, d, delta, lambda, coeffs) + parms.g;
 	return tmp * tmp;
 }
 
