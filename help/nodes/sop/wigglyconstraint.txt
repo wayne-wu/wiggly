@@ -1,0 +1,44 @@
+= Wiggly Constraint =
+
+"""Define spacetime constraint that can be used for the Wiggly Solver"""
+
+== Overview ==
+
+This node is used to define the spacetime constraints that are used by the Wiggly Solver.
+
+@inputs
+
+Tetrahedral Mesh:
+    The tetrahedral mesh to apply the spacetime constraints to.
+
+@parameters
+
+Group: 
+    #id: group
+
+    The group to apply the constraint to. If a group is specified, then the constraint becomes a partial keyframe.
+
+Group Type:
+    #id: grouptype
+
+    The geometry type of the group.
+
+Frame:
+    #id: frame
+ 
+    The frame for this constraint/keyframe.
+
+== Position ==
+
+:include xform#xOrd:
+:include xform#t:
+:include xform#r:
+:include xform#s:
+
+== Velociy ==
+
+Add Velocity
+    #id: usevel
+    Add velocity for this constraint.
+
+@related

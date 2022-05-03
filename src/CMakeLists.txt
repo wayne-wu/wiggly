@@ -6,7 +6,8 @@ project( wiggly )
 # the Houdini installation. See the "Compiling with CMake" section of the HDK
 # documentation for more details, which describes several options for
 # specifying this path.
-list( APPEND CMAKE_PREFIX_PATH "C:/Program Files/Side Effects Software/Houdini 19.0.498/toolkit/cmake" )
+
+list( APPEND CMAKE_PREFIX_PATH "C:/Program Files/Side Effects Software/Houdini 19.0.589/toolkit/cmake" )
 
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.

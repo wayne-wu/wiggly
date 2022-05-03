@@ -1,0 +1,21 @@
+= Wiggly Spline =
+
+"""Define a wiggly spline with a sparse set of constraints"""
+
+== Overview ==
+
+Each Wiggly Spline will consist of a set of Wiggly Constraints.
+
+@inputs
+
+Wiggly Constraints:
+	The list of constraints that are used to calculate this specific Wiggly Spline.
+
+@parameters
+
+Pin Constraint Group: 
+    #id: pingroup
+
+    The points to fix when solving this Wiggly Spline.
+
+@related

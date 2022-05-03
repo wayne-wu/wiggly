@@ -331,6 +331,13 @@ SOP_WigglyVerb::cook(const SOP_NodeVerb::CookParms& cookparms) const
 				{
 					const GA_PointGroup* pinGroup = groupManager.parsePointGroups(
 						groupPattern, GOP_Manager::GroupCreator(detail));
+
+					if (pinGroup == nullptr)
+					{
+						cookparms.sopAddError(SOP_MESSAGE, "Pin group not found.");
+						return;
+					}
+					
 					wiggly->ptRange = GA_Range(*pinGroup, /*invert*/ true);
 				}
 

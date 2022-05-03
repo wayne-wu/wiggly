@@ -1,0 +1,68 @@
+= Wiggly Solver =
+
+"""Generate animation for deformable objects using wiggly splines and spacetime constraints"""
+
+== Overview ==
+
+This is the main node used to solve for the wiggly splines based on spacetime constraints. 
+The node will take in a tetrahedral mesh and output the animation based on the constraints specified per wiggly spline.
+
+@inputs
+
+Tetrahedral Rest Mesh:
+    The rest shape of the tetrahedral geometry. You should use Tet Conform or Tet Embed SOP to tetrahedralize the geometry.
+    
+Wiggly Splines:
+    The wiggly splines to solve for. The input should be a list of primitives for each Wiggly Spline. 
+
+@parameters
+
+== Material Properties ==
+
+Mass Density:
+    #id: massdensity
+
+    The mass density of the geometry.
+
+Stiffness:
+    #id: young
+
+    The stiffness of the geometry.
+
+Poisson Ratio:
+    #id: poisson
+ 
+    The Poisson Ratio of the geometry describes the deformation allowed in the direction perpendicular to the compression/tension direction.
+
+== Compute Settings ==
+
+Mass Damping:
+    #id: alpha
+
+    The mass proportion of the Rayleigh damping.
+
+Stiffness Damping:
+    #id: beta
+
+    The stiffness proportion of the Rayleigh damping.
+
+Dynamics:
+    #id: physical
+
+    The much dynamics to account for in the system. Lower dynamics would make the constraints harder.
+
+Number of Modes:
+    #id: modesnum
+    The number of reduced dimension to include for calculation. Higher number of modes would yield more accurate result, however it will also be slower.
+
+Error Tolerance:
+    #id: epsilon
+    The error allowed for numerical calculations and optimization.
+
+== Visualization ==
+
+Show Constraints:
+    #id: guidegeo
+    Display the wiggly splines and constraints for the system.
+
+@related
