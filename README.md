@@ -3,6 +3,8 @@ University of Pennsylvania, CIS 660: Advanced Topics in Computer Graphics
 
 [Wayne Wu](https://www.wuwayne.com/) and Aditya Abhyankar
 
+![Teaser](img/xwalking.png)
+
 ## Installation
 To use the tools without building, simply copy the `dso`, `config`, `otls` folders to your HOUDINI_USER_PREF_DIR.
 
