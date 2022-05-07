@@ -24,15 +24,17 @@ This project implements the paper: [Animating deformable objects using sparse sp
 
 Implementation
 =============
-The core algorithm of the paper is implemented in C++ using HDK. The node is implemented as a SOP node based on the NodeVerb design.
+The core algorithm (i.e. main solver) of the paper is implemented in C++ using HDK. The node is implemented as a SOP node based on the [NodeVerb](https://www.sidefx.com/docs/hdk/class_s_o_p___node_verb.html) design.
 
-We use the Eigen3 library for most of the linear algebra operations, most importantly for using the Generalized Eigen Solver and SVD operation. We use dlib for its optimization algorithm, as it was the only third-party library we found to work with Windows and fit our needs. While the paper uses Gauss Newton method, we use the BFGS algorithm with approximated derivatives. Finally, we are using a brute-force trapezoidal rule to evaluate the integral of the energy term, instead of using explicit integral formulas.
+We use the Eigen3 library for most of the linear algebra operations, most importantly for using the Generalized Eigen Solver and SVD operations. We use dlib for its optimization algorithm, as it was the only third-party library we found to work with Windows and fit our needs. While the paper uses Gauss Newton method, we use the BFGS algorithm with approximated derivatives. Finally, we are using a brute-force trapezoidal rule to evaluate the integral of the energy term, instead of using explicit integral formulas.
 
 For efficiency, we've implemented multi-threading for many functions using HDK's UT_ThreadedAlgorithm. Specifically, we've parallelized the evaluation of wiggly splines for each mode (i.e. reduced dimension), as the evaluation is largely independent. This provided at least a 3X performance gain.
 
 Workflow
 ============
-We introduce three new SOP nodes to support the workflow:
+Our workflow works on tetrahedral solids. You should follow Houdini's [FEM workflow](https://www.sidefx.com/docs/houdini/finiteelements/about.html#tetrahedral-solids) to set up your mesh. Specifically, use the Remesh SOP and Tet Conform/Embed SOP to generate the tetrahedrons.
+
+We introduce three new SOP nodes to support the Wiggly workflow:
 
 ### Wiggly Constraint SOP
 This is used to define a single spacetime constraint with position and/or velocity data.
