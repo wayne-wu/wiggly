@@ -14,7 +14,9 @@ To use the tools without building, simply copy the `dso`, `config`, `otls`, `hel
 * [cmake](https://cmake.org/)
 * [dlib](http://dlib.net/)
 
-To build the C++ code, you must install the dependencies listed above and have an appropriate compiler. You should also modify `src/CMakeLists.txt` to point to your Houdini and dlib paths.
+1. Download the dependencies above.
+2. Modify `src/CMakeLists.txt` to point to your Houdini and dlib paths.
+3. Generate VS solution using cmake/cmake-gui
 
 Overview
 ============
