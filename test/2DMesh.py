@@ -223,6 +223,17 @@ def keyframe_energy(deltas, lambs, g, keyframes, coeffs, eigvecs, cA=1., cB=1.):
 
     return total
 
+
+def get_edges(n_rows, n_cols):
+    '''
+        Returns connectivity information (list of edges) associated with triangulated, grid-like mesh that has given
+        number of rows and columns.
+
+        TODO: Implement, so that we can potentially test out rotation strain warping.
+    '''
+
+    pass
+
 # Construct M and K for any number of degrees of freedom & any connectivity info
 def get_MK_mats(mass, stiff, edges, n_verts, dof=2):
     '''
@@ -253,50 +264,47 @@ def get_MK_mats(mass, stiff, edges, n_verts, dof=2):
 
     return M, K
 
-
-# Construct mass and stiffness matrices (for 2 & 3 spring cases, in 2D)
-def get_mass_stiffness_mats(m_vals, k_vals):
+# Construct mesh topology
+def get_edges_from_size(n_rows, n_cols):
     '''
-        m_vals = [m1, m2] or [m1, m2, m3]
-        k_vals = [k] or [k1, k2]
+        NOTE: Edges numbered starting from bottom left as follows:
+            7–8–9
+            4–5–6
+            1–2–3.
+
+        NOTE2: Spring attached vertically, horizontally, and diagonally.
     '''
+    edges = []
+    for r in range(n_rows):
+        for c in range(n_cols):
+            edge_num = (r*n_cols) + c
+            # Horiz right connection
+            if c != n_cols-1:
+                edges.append((edge_num, edge_num+1))
+            # Vert up + diag connections
+            if r != n_rows-1:
+                edges.append((edge_num, edge_num+n_cols))
+                if c != 0:
+                    edges.append((edge_num, edge_num+n_cols-1))
+                if c != n_cols-1:
+                    edges.append((edge_num, edge_num+n_cols+1))
 
-    M, K = None, None
-    if len(k_vals) == 1:
-        k = k_vals[0]
-        K = np.array([[-k, 0, k, 0], [0, -k, 0, k], [k, 0, -k, 0], [0, k, 0, -k]])
-        m1, m2 = m_vals[0], m_vals[1]
-        M = np.diag([m1, m1, m2, m2])
+    return edges
 
-    # For 3 masses in a line in 2D (TODO: FIX, IT MIGHT BE WRONG! INSPECT IT AGAIN)
-    if len(k_vals) == 2:
-        k_1, k_2 = k_vals[0], k_vals[1]
-        K = np.array([
-            [-k_1 - k_2, 0, k_1, 0, k_2, 0],
-            [0, -k_1 - k_2, 0, k_1, 0, k_2],
-            [k_1, 0, -k_1 - k_2, 0, k_2, 0],
-            [0, k_1 - k_2, 0, -k_1, 0, k_2],
-            [k_2, 0, k_1, 0, -k_1 - k_2, 0],
-            [0, k_2, 0, k_1, 0, -k_1 - k_2]
-        ])
-        m1, m2, m3 = m_vals[0], m_vals[1], m_vals[2]
-        M = np.diag([m1, m1, m2, m2, m3, m3])
+# Get initial grid POSITIONS (not displacements)
+def get_init_grid_pos(n_rows, n_cols):
+    '''
+        Returns list of form:  [x1, y1, x2, y2, ...]
 
-    # For 3-mass Triangle in 2D
-    if len(k_vals) == 3:
-        k_1, k_2, k_3 = k_vals[0], k_vals[1], k_vals[2]
-        K = np.array([
-            [-k_1 - k_3, 0, k_1, 0, k_3, 0],
-            [0, -k_1 - k_3, 0, k_1, 0, k_3],
-            [k_1, 0, -k_1 - k_2, 0, k_2, 0],
-            [0, k_1, 0, -k_1 - k_2, 0, k_2],
-            [k_3, 0, k_2, 0, -k_2 - k_3, 0],
-            [0, k_3, 0, k_2, 0, -k_2 - k_3]
-        ])
-        m1, m2, m3 = m_vals[0], m_vals[1], m_vals[2]
-        M = np.diag([m1, m1, m2, m2, m3, m3])
+        NOTE: Rows go from bottom to top, columns from left to right.
+    '''
+    positions = []
+    spacing = 5
+    for r in range(n_rows):
+        for c in range(n_cols):
+            positions.extend([r * spacing, c * spacing])
 
-    return M, K
+    return positions
 
 
 # Compute A submatrix and B subvector for single given wiggly spline
@@ -536,39 +544,18 @@ t_start, t_end = 0, 1
 pos_absmax = 2  # positions randomly generated, for now (tangents all 0, for now)
 alpha, beta = 0.01, 0.01
 
-# # Set keyframes (2 mass 1 spring case, 0 partial keyframe case)
-# key1 = (0, [0, 0, 3, 3], [0, 0, 0, 0])   # ordered like: x1, y1, x2, y2
-# key3 = (1, [-1, 3, 5, 5], [0, 0, 0, 0])
-# keyframes = [key1, key3]
+# Construct mesh topology
+n_rows, n_cols = 4, 2
+edges = get_edges_from_size(n_rows, n_cols)
+print(edges)
 
-# Set keyframes (2 mass 1 spring case, 1 partial keyframe case)
-# key1 = (0, [0, 0, 3, 3], [0, 0, 0, 0])   # ordered like: x1, y1, x2, y2
-# partial_key2 = (0.5, [None, None, 7, 8], [None, None, None, None])   # Try: t=0.5: [5, None, None] & [None, None, 5], t=0.2: [None, None, -5], & t=0.5: [None, -2, 5] doesn't properly do it unless change energy
-# key3 = (1, [-1, 3, 5, 5], [0, 0, 0, 0])
-# keyframes = [key1, partial_key2, key3]
+# Set keyframes
+key1 = [0, [0 for _ in range(2 * n_rows * n_cols)], [0 for _ in range(2 * n_rows * n_cols)]]
 
-# Set keyframes (3 mass 2 spring case, 1 partial keyframe case)
-# key1 = (0, [0, 0, 3, 3, 1, 1], [0, 0, 0, 0, 0, 0])   # ordered like: x1, y1, x2, y2, x3, y3
-# partial_key2 = (0.5, [None, None, 6, 8, None, None], [None, None, None, None, None, None])
-# key3 = (1, [-1, 3, 5, 5, -2, -5], [0, 0, 0, 0, 0, 0])
-# keyframes = [key1, partial_key2, key3]
+partial_key2 = [0.5, [None for _ in range(2 * n_rows * n_cols)], [None for _ in range(2 * n_rows * n_cols)]]
+partial_key2[1][0:4] = [-10, -7, -10, -7]
 
-# Set keyframes (4 mass 6 spring case, 0 partial keyframe case)
-key1 = (0, [0, 0,       # bottom left
-            0, 0,       # bottom right
-            0, 0,     # top right
-            0, 0],      # top left
-           [0, 0, 0, 0, 0, 0, 0, 0])   # velocity
-
-partial_key2 = (0.5, [None, None,
-                      5, -5,
-                      None, None,
-                      -5, 5], [None, None, None, None, None, None, None, None])
-
-key3 = (1, [0, -3,
-            -3, -3,
-            0, 0,
-            0, 0], [0, 0, 0, 0, 0, 0, 0, 0])
+key3 = [1, [0 if i%2==0 else -12 for i in range(2 * n_rows * n_cols)], [0 for _ in range(2 * n_rows * n_cols)]]
 
 keyframes = [key1, partial_key2, key3]
 
@@ -578,9 +565,7 @@ mass, stiff = 1, 50
 g = 0  # assume non-existent gravity (for this example)
 
 # Compute splines
-# M, K = get_mass_stiffness_mats(m_vals, k_vals)
-edges = [(0, 1), (1, 2), (2, 3), (3, 0), (0, 2), (3, 1)]
-M, K = get_MK_mats(mass, stiff, edges, n_verts=4)
+M, K = get_MK_mats(mass, stiff, edges, n_verts=n_rows * n_cols)
 eigvals, eigvecs = compute_eigenstuff(M, K)
 lambs, deltas = compute_lambs_deltas(eigvals, alpha, beta)
 print('Eigenvals:', eigvals)
@@ -599,12 +584,7 @@ sample_size = 0.01
 colors = ['red', 'blue', 'green', 'cyan', 'purple', 'orange', 'yellow', 'magenta']
 
 # Mass spring graphics params
-# p0 = [0, -10, 5, -10]  # initial positions
-# p0 = [0, -10, 5, -10, 10, -10]  # initial positions
-p0 = [0, 0,
-      10, 0,
-      10, 10,
-      0, 10]  # initial positions
+p0 = get_init_grid_pos(n_rows, n_cols)
 cube_apothem = 20
 sim_scale = cube_apothem * 1.5
 t_curr = 0
