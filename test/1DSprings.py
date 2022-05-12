@@ -26,6 +26,7 @@ import tkinter as tk
 from functools import partial
 import random
 import time
+from sympy import *
 
 # Window size
 n = 10
@@ -69,7 +70,7 @@ def b(t, delta, lamb, i):
     assert np.power(delta, 2) != lamb or (lamb == 0 and delta == 0)
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
@@ -93,7 +94,7 @@ def b(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(sign1 * t * delta) * np.cos(t * np.sqrt(-np.power(delta, 2) + lamb))
 
-        return -np.exp(sign1 * t * delta) * np.sin(t * np.sqrt(-np.power(delta, 2) + lamb))
+        return np.exp(sign1 * t * delta) * np.sin(t * np.sqrt(-np.power(delta, 2) + lamb))
 
 
 # First derivatives of basis functions
@@ -101,7 +102,7 @@ def b_dot(t, delta, lamb, i):
     assert np.power(delta, 2, ) != lamb or (lamb == 0 and delta == 0)
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
@@ -127,7 +128,7 @@ def b_dot(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(sign1 * t * delta) * ((sign1 * delta * np.cos(t * expr)) - (expr * np.sin(t * expr)))
 
-        return np.exp(sign1 * t * delta) * (-(expr * np.cos(t * expr)) - (sign1 * delta * np.sin(t * expr)))
+        return -np.exp(sign1 * t * delta) * (-(expr * np.cos(t * expr)) - (sign1 * delta * np.sin(t * expr)))
 
 
 # Second derivatives of basis functions
@@ -135,7 +136,7 @@ def b_ddot(t, delta, lamb, i):
     assert np.power(delta, 2, ) != lamb
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
@@ -160,8 +161,8 @@ def b_ddot(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(t * sign1) * ((dsqExpr * np.cos(t * expr)) + (2 * delta * expr * (-sign1) * np.sin(t * expr)))
 
-        return -sign1 * np.exp(sign1 * t * delta) * (
-                    (2 * delta * expr * np.cos(t * expr)) + (sign1 * dsqExpr * np.sin(t * expr)))
+        return -(-sign1 * np.exp(sign1 * t * delta) * (
+                    (2 * delta * expr * np.cos(t * expr)) + (sign1 * dsqExpr * np.sin(t * expr))))
 
 
 # Piecewise Integrand for 1D Energy Function
@@ -364,7 +365,7 @@ def compute_coefficients(keyframes, M, K, eigvecs, eigvals, lambs, deltas, g):
 
     # Construct the giant A matrix and giant B vector, portion by portion, per wiggly spline
     # Part a) Initialize them, and compute d total values for constant c, lambdas, and deltas
-    n_rows, n_cols = ((3 * m * d) + d), 4 * m * d
+    n_rows, n_cols = ((3 * m * d) + d), 4 * m * d    # assuming C2 everywhere. maybe that's why velocity ones don't work yet
     A = np.zeros((n_rows, n_cols))
     B = np.zeros(n_rows)
     c = np.array([g / abs(l) if abs(l) != 0 else 0 for l in eigvals])
@@ -380,7 +381,7 @@ def compute_coefficients(keyframes, M, K, eigvecs, eigvals, lambs, deltas, g):
     print('Final Positions in Modal Coords:', np.dot(np.dot(eigvecs, M), keyframes[-1][1]))
     for row in range(d, 2*d):
         for col_grp in range(0, n_cols - (4 * m) + 1, 4 * m):
-            A[row][col_grp:col_grp + (4 * m)] = np.array([b(keyframes[-1][0], deltas[row-d], lambs[row-d], i % 4) if i>=4 else 0 for i in range(4 * m)]) if (row-d)*4*m == col_grp else np.zeros(4*m)
+            A[row][col_grp:col_grp + (4 * m)] = np.array([b(keyframes[-1][0], deltas[row-d], lambs[row-d], i % 4) if i>=(4*m)-4 else 0 for i in range(4 * m)]) if (row-d)*4*m == col_grp else np.zeros(4*m)
 
     # Part bii) Add the 2d velocity ones (d at the starting keyframe, d at the ending)
     B[2*d:3*d] = np.dot(np.dot(eigvecs, M), keyframes[0][2])
@@ -392,7 +393,7 @@ def compute_coefficients(keyframes, M, K, eigvecs, eigvals, lambs, deltas, g):
     print('Final Tangents in Modal Coords:', np.dot(np.dot(eigvecs, M), keyframes[-1][2]))
     for row in range(3*d, 4*d):
         for col_grp in range(0, n_cols - (4 * m) + 1, 4 * m):
-            A[row][col_grp:col_grp + (4 * m)] = np.array([b_dot(keyframes[-1][0], deltas[row-(3*d)], lambs[row-(3*d)], i % 4) if i>=4 else 0 for i in range(4 * m)]) if (row - (3*d))*4*m == col_grp else np.zeros(4*m)
+            A[row][col_grp:col_grp + (4 * m)] = np.array([b_dot(keyframes[-1][0], deltas[row-(3*d)], lambs[row-(3*d)], i % 4) if i>=(4*m)-4 else 0 for i in range(4 * m)]) if (row - (3*d))*4*m == col_grp else np.zeros(4*m)
 
     # Part c) For each eigenmode, get the individual A submatrix and B subvector
     for i in range(d):
@@ -487,7 +488,7 @@ key3 = (1, [1, -3, 2], [0, 0, 0])
 # partial_key2 = (0.5, [None, 1], [None, None])
 # # partial_key3 = (0.5, [None, 2], [None, None])
 # key3 = (1, [3, 0], [0, 0])
-keyframes = [key1, key3]
+keyframes = [key1, partial_key2, key3]
 
 mass, stiff = 1, 100
 m_vals = [mass, mass, mass]
@@ -635,5 +636,6 @@ def run_step():
 if __name__ == '__main__':
     while True:
         run_step()
+
 
 tk.mainloop()

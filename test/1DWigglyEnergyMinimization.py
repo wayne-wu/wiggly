@@ -21,6 +21,9 @@ window_w = int(2 ** n)
 window_h = int(2 ** n)
 np.set_printoptions(suppress=True)
 
+# Epsilon
+epsilon = 1e-12
+
 # Tkinter Setup
 root = tk.Tk()
 root.title("1D Wiggly Spline, Partially Keyframed + Found via Energy Minimization")
@@ -38,6 +41,7 @@ def A(x, y):
 
 # Basis functions
 def b(t, delta, lamb, i):
+    global epsilon
     """
         t: the input value
         delta, lamb: real numbers, parameters
@@ -53,12 +57,22 @@ def b(t, delta, lamb, i):
     assert np.power(delta, 2) != lamb or (lamb == 0 and delta == 0)
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
-    if delta == 0 and lamb == 0:
+    if abs(delta) < epsilon and abs(lamb) < epsilon:
         return np.power(t, i)
+
+    if abs(delta) > epsilon > abs(lamb):
+        if i == 0:
+            return 1
+        if i == 1:
+            return t
+        if i == 2:
+            return np.exp(-2 * delta * t) / (4 * np.power(delta, 2))
+        if i == 3:
+            return np.exp(2 * delta * t) / (4 * np.power(delta, 2))
 
     # Normal cases
     if np.power(delta, 2) > lamb:
@@ -67,7 +81,7 @@ def b(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(sign1 * t * delta) * np.cos(t * np.sqrt(-np.power(delta, 2) + lamb))
 
-        return -np.exp(sign1 * t * delta) * np.sin(t * np.sqrt(-np.power(delta, 2) + lamb))
+        return np.exp(sign1 * t * delta) * np.sin(t * np.sqrt(-np.power(delta, 2) + lamb))
 
 
 # First derivatives of basis functions
@@ -75,12 +89,22 @@ def b_dot(t, delta, lamb, i):
     assert np.power(delta, 2, ) != lamb or (lamb == 0 and delta == 0)
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
-    if delta == 0 and lamb == 0:
+    if abs(delta) < epsilon and abs(lamb) < epsilon:
         return 0 if i == 0 else i * np.power(t, i - 1)
+
+    if abs(delta) > epsilon > abs(lamb):
+        if i == 0:
+            return 0
+        if i == 1:
+            return 1
+        if i == 2:
+            return np.exp(-2 * delta * t) / (-2 * delta)
+        if i == 3:
+            return np.exp(2 * delta * t) / (2 * delta)
 
     if np.power(delta, 2) > lamb:
         expr = (sign1 * delta) + (sign2 * np.sqrt(np.power(delta, 2) - lamb))
@@ -91,7 +115,7 @@ def b_dot(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(sign1 * t * delta) * ((sign1 * delta * np.cos(t * expr)) - (expr * np.sin(t * expr)))
 
-        return np.exp(sign1 * t * delta) * (-(expr * np.cos(t * expr)) - (sign1 * delta * np.sin(t * expr)))
+        return -np.exp(sign1 * t * delta) * (-(expr * np.cos(t * expr)) - (sign1 * delta * np.sin(t * expr)))
 
 
 # Second derivatives of basis functions
@@ -99,12 +123,20 @@ def b_ddot(t, delta, lamb, i):
     assert np.power(delta, 2, ) != lamb
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
-    if delta == 0 and lamb == 0:
+    if abs(delta) < epsilon and abs(lamb) < epsilon:
         return 0 if i <= 1 else i * (i - 1) * np.power(t, i - 2)
+
+    if abs(delta) > epsilon > abs(lamb):
+        if i == 0 or i == 1:
+            return 0
+        if i == 2:
+            return np.exp(-2 * delta * t)
+        if i == 3:
+            return np.exp(2 * delta * t)
 
     if np.power(delta, 2) > lamb:
         expr = (sign1 * delta) + (sign2 * np.sqrt(np.power(delta, 2) - lamb))
@@ -116,8 +148,8 @@ def b_ddot(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(t * sign1) * ((dsqExpr * np.cos(t * expr)) + (2 * delta * expr * (-sign1) * np.sin(t * expr)))
 
-        return -sign1 * np.exp(sign1 * t * delta) * (
-                    (2 * delta * expr * np.cos(t * expr)) + (sign1 * dsqExpr * np.sin(t * expr)))
+        return -(-sign1 * np.exp(sign1 * t * delta) * (
+                    (2 * delta * expr * np.cos(t * expr)) + (sign1 * dsqExpr * np.sin(t * expr))))
 
 
 # Piecewise Integrand for 1D Energy Function
@@ -257,7 +289,8 @@ def compute_coefficients(keyframes, delta, lamb, g):
     _, _, VT = numpy.linalg.svd(A)
     subspace_dim = n_coeffs - n_constraints
     U = np.transpose(VT)[:, (n_coeffs - subspace_dim):]
-    w_star = np.transpose([np.linalg.pinv(A).dot(B)])
+    pinv = np.dot(np.transpose(A), np.linalg.inv(np.dot(A, np.transpose(A))))
+    w_star = pinv.dot(B)#np.transpose([np.linalg.pinv(A).dot(B)])
 
     # All solutions are of the form: w = w_star + Uz, for some z of size subspace_dim.
     # Here is the integral energy function to minimize.
@@ -267,6 +300,10 @@ def compute_coefficients(keyframes, delta, lamb, g):
 
     # Now we search through the reduced space and return the corresponding coefficients!
     z = minimize(energy, np.zeros((subspace_dim, 1)), options={'disp': True})
+    print('result:', w_star + np.dot(U, np.zeros((subspace_dim, 1))))
+    print()
+    print('B:', B)
+    print()
     return np.transpose(w_star)[0] + U.dot(z.x)
 
 
@@ -322,9 +359,9 @@ def wiggly_ddot(t, delta, lamb, g, keyframes, coeffs):
     return total
 
 
-# Main wiggly spline params (full keyframes case)
+# Main wiggly spline params
 t_start, t_end = 0, 1
-n_frames = 3  # must be >=2
+n_frames = 5  # must be >=2
 pos_absmax = 2  # positions randomly generated, for now (tangents all 0, for now)
 delta, lamb, g = 2, 200, 1
 keyframes = [(i / (n_frames - 1), 0 if i % 2 == 0 else 1, None if i != 0 and i != n_frames - 1 else 0) for i in
@@ -332,10 +369,11 @@ keyframes = [(i / (n_frames - 1), 0 if i % 2 == 0 else 1, None if i != 0 and i !
 
 # Compute spline
 coeffs = compute_coefficients(keyframes, delta, lamb, g)
+print(wiggly(1, delta, lamb, g, keyframes, coeffs))
 
 # Other params
 first_run = True
-scale_x, scale_y = 500, 100
+scale_x, scale_y = 500, 50
 pt_radius = 10
 tg_linelen = 30
 sample_size = 0.01
@@ -415,11 +453,7 @@ def run_step():
 
 
 if __name__ == '__main__':
-
-
-    eigvals, eigvecs = eigh(A, B, eigvals_only=False, subset_by_index=[0, 1, 2])
-
-    # while True:
-    #     run_step()
+    while True:
+        run_step()
 
 tk.mainloop()

@@ -16,6 +16,9 @@ window_w = int(2**n)
 window_h = int(2**n)
 np.set_printoptions(suppress=True)
 
+# Epsilon
+epsilon = 1e-12
+
 # Tkinter Setup
 root = tk.Tk()
 root.title("1D Wiggly Spline, Only Positions Specified at Non-Boundaries (C2)")
@@ -33,6 +36,7 @@ def A(x, y):
 
 # Basis functions
 def b(t, delta, lamb, i):
+    global epsilon
     """
         t: the input value
         delta, lamb: real numbers, parameters
@@ -46,14 +50,24 @@ def b(t, delta, lamb, i):
         3  |  -, -
     """
     assert np.power(delta, 2) != lamb or (lamb == 0 and delta == 0)
-    assert 0<=i<=3
+    assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
-    if delta == 0 and lamb == 0:
+    if abs(delta) < epsilon and abs(lamb) < epsilon:
         return np.power(t, i)
+
+    if abs(delta) > epsilon > abs(lamb):
+        if i == 0:
+            return 1
+        if i == 1:
+            return t
+        if i == 2:
+            return np.exp(-2 * delta * t) / (4 * np.power(delta, 2))
+        if i == 3:
+            return np.exp(2 * delta * t) / (4 * np.power(delta, 2))
 
     # Normal cases
     if np.power(delta, 2) > lamb:
@@ -62,20 +76,30 @@ def b(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(sign1 * t * delta) * np.cos(t * np.sqrt(-np.power(delta, 2) + lamb))
 
-        return -np.exp(sign1 * t * delta) * np.sin(t * np.sqrt(-np.power(delta, 2) + lamb))
+        return np.exp(sign1 * t * delta) * np.sin(t * np.sqrt(-np.power(delta, 2) + lamb))
 
 
 # First derivatives of basis functions
 def b_dot(t, delta, lamb, i):
-    assert np.power(delta, 2,) != lamb or (lamb == 0 and delta == 0)
+    assert np.power(delta, 2, ) != lamb or (lamb == 0 and delta == 0)
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
-    if delta == 0 and lamb == 0:
-        return 0 if i == 0 else i * np.power(t, i-1)
+    if abs(delta) < epsilon and abs(lamb) < epsilon:
+        return 0 if i == 0 else i * np.power(t, i - 1)
+
+    if abs(delta) > epsilon > abs(lamb):
+        if i == 0:
+            return 0
+        if i == 1:
+            return 1
+        if i == 2:
+            return np.exp(-2 * delta * t) / (-2 * delta)
+        if i == 3:
+            return np.exp(2 * delta * t) / (2 * delta)
 
     if np.power(delta, 2) > lamb:
         expr = (sign1 * delta) + (sign2 * np.sqrt(np.power(delta, 2) - lamb))
@@ -86,20 +110,28 @@ def b_dot(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(sign1 * t * delta) * ((sign1 * delta * np.cos(t * expr)) - (expr * np.sin(t * expr)))
 
-        return np.exp(sign1 * t * delta) * (-(expr * np.cos(t * expr)) - (sign1 * delta * np.sin(t * expr)))
+        return -np.exp(sign1 * t * delta) * (-(expr * np.cos(t * expr)) - (sign1 * delta * np.sin(t * expr)))
 
 
 # Second derivatives of basis functions
 def b_ddot(t, delta, lamb, i):
-    assert np.power(delta, 2,) != lamb
+    assert np.power(delta, 2, ) != lamb
     assert 0 <= i <= 3
 
-    sign1 = 1 if i <= 1 else -1
+    sign1 = -1 if i <= 1 else 1
     sign2 = 1 if i % 2 == 0 else -1
 
     # Special cases (TODO: include more!)
-    if delta == 0 and lamb == 0:
-        return 0 if i <= 1 else i * (i-1) * np.power(t, i-2)
+    if abs(delta) < epsilon and abs(lamb) < epsilon:
+        return 0 if i <= 1 else i * (i - 1) * np.power(t, i - 2)
+
+    if abs(delta) > epsilon > abs(lamb):
+        if i == 0 or i == 1:
+            return 0
+        if i == 2:
+            return np.exp(-2 * delta * t)
+        if i == 3:
+            return np.exp(2 * delta * t)
 
     if np.power(delta, 2) > lamb:
         expr = (sign1 * delta) + (sign2 * np.sqrt(np.power(delta, 2) - lamb))
@@ -111,7 +143,8 @@ def b_ddot(t, delta, lamb, i):
         if sign2 == 1:
             return np.exp(t * sign1) * ((dsqExpr * np.cos(t * expr)) + (2 * delta * expr * (-sign1) * np.sin(t * expr)))
 
-        return -sign1 * np.exp(sign1 * t * delta) * ((2 * delta * expr * np.cos(t * expr)) + (sign1 * dsqExpr * np.sin(t * expr)))
+        return -(-sign1 * np.exp(sign1 * t * delta) * (
+                    (2 * delta * expr * np.cos(t * expr)) + (sign1 * dsqExpr * np.sin(t * expr))))
 
 
 # Coefficient computation (Using x = (A^-1)*b.)
@@ -225,9 +258,9 @@ def wiggly(t, delta, lamb, g, keyframes, coeffs):
 
 # Main wiggly spline params (full keyframes case)
 t_start, t_end = 0, 1
-n_frames = 5    # must be >=2
+n_frames = 4    # must be >=2
 pos_absmax = 2  # positions randomly generated, for now (tangents all 0, for now)
-delta, lamb, g = 2, 10, 0
+delta, lamb, g = 20, 0, 0
 keyframes = [(i / (n_frames-1), 0 if i % 2 == 0 else 1, None if i != 0 and i != n_frames-1 else 0) for i in range(n_frames)]  # No tangent data specified  # pos_absmax * ((random.random() * 2) - 1)
 
 # Compute spline
@@ -312,7 +345,23 @@ def run_step():
 
 
 if __name__ == '__main__':
-    while True:
-        run_step()
+    # while True:
+    #     run_step()
+    lamb, delta, t = 15, 3, 0.3
+    print([b(t, delta, lamb, i) for i in range(4)])
+    print([b_dot(t, delta, lamb, i) for i in range(4)])
+    print([b_ddot(t, delta, lamb, i) for i in range(4)])
+    print()
+
+    lamb, delta, t = 15, 0, 0.3
+    print([b(t, delta, lamb, i) for i in range(4)])
+    print([b_dot(t, delta, lamb, i) for i in range(4)])
+    print([b_ddot(t, delta, lamb, i) for i in range(4)])
+    print()
+    
+    lamb, delta, t = 0, 15, 0.3
+    print([b(t, delta, lamb, i) for i in range(4)])
+    print([b_dot(t, delta, lamb, i) for i in range(4)])
+    print([b_ddot(t, delta, lamb, i) for i in range(4)])
 
 tk.mainloop()
